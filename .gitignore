@@ -153,3 +153,6 @@ $RECYCLE.BIN/
 .springBeans
 
 # End of https://www.toptal.com/developers/gitignore/api/eclipse,maven,java,java-web,git,windows
+
+### IntelliJ IDEA ###
+.idea/
