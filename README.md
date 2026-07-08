@@ -10,6 +10,15 @@ _작성 예정 (Phase 8에서 최종 정리)_
 
 _작성 예정 — Phase 1 이후 앱 골격이 만들어지면 다이어그램 추가_
 
+### 이벤트 브로커: Kafka 대신 NATS JetStream를 택한 이유
+
+구매 모듈의 비동기 이벤트(`OrderCompletedEvent`, `LowStockEvent`)는 Kafka 대신 **NATS JetStream**으로 구현한다.
+
+- **가벼운 리소스 사용**: Kafka는 JVM 기반 브로커라 실행에 최소 수백 MB~1GB 이상의 메모리가 필요하지만, NATS(JetStream 포함)는 단일 Go 바이너리로 동작해 메모리 사용량이 훨씬 적다. 컨테이너별 메모리 상한(`mem_limit`)을 두는 이 프로젝트의 로컬 개발 환경 조건과도 잘 맞는다.
+- **운영 단순성**: Zookeeper나 별도 컨트롤러 클러스터 없이 컨테이너 하나로 바로 실행 가능해 로컬 데모/CI 구성이 단순하다.
+- **기능 충분성**: `OrderCompletedEvent`/`LowStockEvent`는 발행-구독 기반 최종적 일관성(eventual consistency) 처리가 목적이며, JetStream의 영속 스트림 + at-least-once 전달 보장만으로 충분하다. 대용량 스트리밍·파티셔닝 같은 Kafka 고유의 강점이 필요한 워크로드는 아니다.
+- **트레이드오프**: Kafka가 업계 표준으로서 생태계·인지도 면에서는 더 유리하지만, 이 프로젝트 규모에서는 자원 효율성과 운영 단순성이 더 중요하다고 판단했다.
+
 ## ERD
 
 To-Be 스키마는 [`docs/ERD.md`](./docs/ERD.md) 참고.

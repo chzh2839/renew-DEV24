@@ -123,9 +123,9 @@ erDiagram
 ```
 
 **신규 설계 포인트**
-- `Stock.safety_stock`: 구매 가능 수량은 `quantity - safety_stock`로 검증(단순 재고 있음/없음이 아니라 임계치 기반 판매 가능 여부 판단). 임계치 이하로 떨어지면 `LowStockEvent`를 Kafka로 발행.
+- `Stock.safety_stock`: 구매 가능 수량은 `quantity - safety_stock`로 검증(단순 재고 있음/없음이 아니라 임계치 기반 판매 가능 여부 판단). 임계치 이하로 떨어지면 `LowStockEvent`를 NATS JetStream으로 발행.
 - `Stock.version`: 동시 구매 시 oversell 방지용 낙관적 락. 비관적 락 대신 낙관적 락을 선택한 이유는 `MODERNIZATION_PLAN.md` 3절 참고.
-- 구매 완료 트랜잭션 커밋 후 적립금/알림은 `OrderCompletedEvent`로 Kafka에 발행(비동기, 최종적 일관성으로 충분).
+- 구매 완료 트랜잭션 커밋 후 적립금/알림은 `OrderCompletedEvent`로 NATS JetStream에 발행(비동기, 최종적 일관성으로 충분).
 
 ## 4. 리뷰 모듈
 
