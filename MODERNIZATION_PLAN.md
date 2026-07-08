@@ -50,7 +50,7 @@
 
 ## 4. 신규 기술 스택
 
-- **Java 21(LTS) + Spring Boot 3.3.x** (Jakarta 네임스페이스 — virtual thread 등 최신 LTS 기능 언급 가능)
+- **Java 21(LTS) + Spring Boot 3.5.x** (Jakarta 네임스페이스 — virtual thread 등 최신 LTS 기능 언급 가능. 3.3.x는 Initializr에서 더 이상 제공되지 않아 3.x 라인 최신인 3.5.x로 진행)
 - **Gradle(Kotlin DSL)** — QueryDSL Q-type 코드젠 설정이 깔끔하고 최신 Spring 진영 관례에 가까움
 - **PostgreSQL 16** + **Flyway** 스키마 버전관리 (`V5__add_book_search_index.sql`처럼 성능 개선 이력을 마이그레이션으로 남김)
 - **Spring Security 6 + JWT** (Stateless REST API이므로 CSRF는 불필요 — README에 근거 명시)
@@ -75,7 +75,7 @@
 - README 뼈대 작성
 
 ### Phase 1. 앱 골격 & 인프라
-- Spring Boot 3.3 + Gradle 프로젝트 생성
+- Spring Boot 3.5 + Gradle 프로젝트 생성
 - `ApiResponse`/`ErrorCode`/`GlobalExceptionHandler` 공통 골격
 - springdoc 연동
 - GitHub Actions 빌드 워크플로우
