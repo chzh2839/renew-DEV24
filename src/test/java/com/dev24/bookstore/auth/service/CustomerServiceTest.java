@@ -35,28 +35,31 @@ class CustomerServiceTest {
         customerService = new CustomerServiceImpl(customerRepository, passwordEncoder);
     }
 
+    // 회원가입 시 원문 비밀번호가 BCrypt로 해싱되어 저장되는지 검증
     @Test
     void signUp_hashesPasswordWithBCrypt() {
         given(customerRepository.existsByLoginId("dev24")).willReturn(false);
         given(customerRepository.save(any(Customer.class))).willAnswer(invocation -> invocation.getArgument(0));
 
-        Customer customer = customerService.signUp(
-                "dev24", "password123!", "홍길동", "gildong", "gildong@example.com", "010-1234-5678", "서울", "소설", true);
+        Customer customer = customerService.signUp(new CustomerSignUpCommand(
+                "dev24", "password123!", "홍길동", "gildong", "gildong@example.com", "010-1234-5678", "서울", "소설", true));
 
         assertThat(customer.getPasswordHash()).isNotEqualTo("password123!");
         assertThat(passwordEncoder.matches("password123!", customer.getPasswordHash())).isTrue();
     }
 
+    // 이미 존재하는 로그인 ID로 가입 시 DUPLICATE_LOGIN_ID 예외를 던지는지 검증
     @Test
     void signUp_duplicateLoginId_throwsBusinessException() {
         given(customerRepository.existsByLoginId("dev24")).willReturn(true);
 
-        assertThatThrownBy(() -> customerService.signUp(
-                "dev24", "password123!", "홍길동", "gildong", "gildong@example.com", "010-1234-5678", "서울", "소설", true))
+        assertThatThrownBy(() -> customerService.signUp(new CustomerSignUpCommand(
+                "dev24", "password123!", "홍길동", "gildong", "gildong@example.com", "010-1234-5678", "서울", "소설", true)))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode()).isEqualTo(ErrorCode.DUPLICATE_LOGIN_ID));
     }
 
+    // 올바른 비밀번호로 로그인 시 저장된 Customer 엔티티를 반환하는지 검증
     @Test
     void authenticate_correctPassword_returnsCustomer() {
         String hash = passwordEncoder.encode("password123!");
@@ -68,6 +71,7 @@ class CustomerServiceTest {
         assertThat(authenticated).isEqualTo(customer);
     }
 
+    // 비밀번호가 틀리면 INVALID_CREDENTIALS 예외를 던지는지 검증
     @Test
     void authenticate_wrongPassword_throwsInvalidCredentials() {
         String hash = passwordEncoder.encode("password123!");
@@ -79,6 +83,7 @@ class CustomerServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode()).isEqualTo(ErrorCode.INVALID_CREDENTIALS));
     }
 
+    // 존재하지 않는 로그인 ID도 (계정 존재 여부를 노출하지 않기 위해) 동일하게 INVALID_CREDENTIALS로 응답하는지 검증
     @Test
     void authenticate_unknownLoginId_throwsInvalidCredentials() {
         given(customerRepository.findByLoginId(anyString())).willReturn(Optional.empty());

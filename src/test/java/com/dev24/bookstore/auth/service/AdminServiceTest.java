@@ -34,6 +34,7 @@ class AdminServiceTest {
         adminService = new AdminServiceImpl(adminRepository, passwordEncoder);
     }
 
+    // 올바른 비밀번호로 로그인 시 저장된 Admin 엔티티를 반환하는지 검증
     @Test
     void authenticate_correctPassword_returnsAdmin() {
         String hash = passwordEncoder.encode("adminpassword123!");
@@ -45,6 +46,7 @@ class AdminServiceTest {
         assertThat(authenticated).isEqualTo(admin);
     }
 
+    // 비밀번호가 틀리면 INVALID_CREDENTIALS 예외를 던지는지 검증
     @Test
     void authenticate_wrongPassword_throwsInvalidCredentials() {
         String hash = passwordEncoder.encode("adminpassword123!");
@@ -56,6 +58,7 @@ class AdminServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode()).isEqualTo(ErrorCode.INVALID_CREDENTIALS));
     }
 
+    // 존재하지 않는 로그인 ID도 (계정 존재 여부를 노출하지 않기 위해) 동일하게 INVALID_CREDENTIALS로 응답하는지 검증
     @Test
     void authenticate_unknownLoginId_throwsInvalidCredentials() {
         given(adminRepository.findByLoginId(anyString())).willReturn(Optional.empty());

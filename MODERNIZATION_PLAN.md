@@ -140,6 +140,7 @@
 - freeboard/qna에 리뷰 모듈 패턴 재적용
 - 도서 목록 Caffeine 캐시
 - Actuator+Micrometer
+- 리프레시 토큰 회전(rotation) — 재사용 감지로 탈취 대응 강화
 
 ## 6. 검증 방법
 

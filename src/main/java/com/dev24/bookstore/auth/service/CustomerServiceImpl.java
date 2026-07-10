@@ -20,13 +20,13 @@ public class CustomerServiceImpl implements CustomerService {
 
     @Override
     @Transactional
-    public Customer signUp(String loginId, String rawPassword, String name, String nickname,
-                            String email, String phone, String address, String interest, boolean newsletterYn) {
-        if (customerRepository.existsByLoginId(loginId)) {
+    public Customer signUp(CustomerSignUpCommand command) {
+        if (customerRepository.existsByLoginId(command.loginId())) {
             throw new BusinessException(ErrorCode.DUPLICATE_LOGIN_ID);
         }
-        String passwordHash = passwordEncoder.encode(rawPassword);
-        Customer customer = new Customer(loginId, passwordHash, name, nickname, email, phone, address, interest, newsletterYn);
+        String passwordHash = passwordEncoder.encode(command.rawPassword());
+        Customer customer = new Customer(command.loginId(), passwordHash, command.name(), command.nickname(),
+                command.email(), command.phone(), command.address(), command.interest(), command.newsletterYn());
         return customerRepository.save(customer);
     }
 
