@@ -10,11 +10,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.dev24.bookstore.auth.domain.Admin;
 import com.dev24.bookstore.auth.domain.Customer;
-import com.dev24.bookstore.auth.dto.CustomerSignUpRequest;
-import com.dev24.bookstore.auth.dto.CustomerSignUpResponse;
-import com.dev24.bookstore.auth.dto.LoginRequest;
-import com.dev24.bookstore.auth.dto.RefreshTokenRequest;
-import com.dev24.bookstore.auth.dto.TokenResponse;
+import com.dev24.bookstore.auth.controller.request.CustomerSignUpRequest;
+import com.dev24.bookstore.auth.controller.request.LoginRequest;
+import com.dev24.bookstore.auth.controller.request.RefreshTokenRequest;
+import com.dev24.bookstore.auth.controller.response.CustomerSignUpResponse;
+import com.dev24.bookstore.auth.controller.response.TokenResponse;
 import com.dev24.bookstore.auth.security.AccessTokenBlacklist;
 import com.dev24.bookstore.auth.security.AccessTokenClaims;
 import com.dev24.bookstore.auth.security.BearerTokenResolver;

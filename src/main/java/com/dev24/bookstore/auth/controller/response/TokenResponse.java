@@ -1,4 +1,4 @@
-package com.dev24.bookstore.auth.dto;
+package com.dev24.bookstore.auth.controller.response;
 
 public record TokenResponse(String accessToken, String refreshToken, String tokenType) {
 

@@ -1,4 +1,4 @@
-package com.dev24.bookstore.auth.dto;
+package com.dev24.bookstore.auth.controller.request;
 
 import jakarta.validation.constraints.NotBlank;
 
