@@ -2,6 +2,7 @@ package com.dev24.bookstore.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -14,8 +15,12 @@ import com.dev24.bookstore.auth.security.JwtAuthenticationFilter;
 
 import lombok.RequiredArgsConstructor;
 
+// URL 패턴(아래 filterChain)은 인증 여부만 가르는 안전망이고, 실제로 어떤 권한이 필요한지는
+// 각 컨트롤러 메서드에 붙인 @PreAuthorize가 자기 문서화한다
+// (이중 레이어 - URL 패턴은 바뀌어도 어노테이션이 최후 방어선 역할을 한다)
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 

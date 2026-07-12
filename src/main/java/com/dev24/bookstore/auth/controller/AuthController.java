@@ -3,6 +3,7 @@ package com.dev24.bookstore.auth.controller;
 import java.time.Duration;
 import java.time.Instant;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -82,6 +83,7 @@ public class AuthController {
 
     // 로그아웃 - 현재 액세스 토큰을 남은 유효시간만큼 블랙리스트에 등록하고, 리프레시 토큰은 Redis에서 즉시 삭제
     @PostMapping("/logout")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> logout(HttpServletRequest servletRequest, @Valid @RequestBody RefreshTokenRequest request) {
         String accessToken = BearerTokenResolver.resolve(servletRequest);
         // /logout은 인증이 필요한 경로라 필터를 통과했다면 파싱은 항상 성공한다(방어적으로 예외 처리)

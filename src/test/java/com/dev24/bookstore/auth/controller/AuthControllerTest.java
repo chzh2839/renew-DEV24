@@ -3,6 +3,7 @@ package com.dev24.bookstore.auth.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -11,11 +12,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.Date;
 import java.util.Optional;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithAnonymousUser;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -24,17 +29,23 @@ import com.dev24.bookstore.auth.domain.Customer;
 import com.dev24.bookstore.auth.domain.Role;
 import com.dev24.bookstore.auth.security.AccessTokenBlacklist;
 import com.dev24.bookstore.auth.security.AccessTokenClaims;
+import com.dev24.bookstore.auth.security.JwtAuthenticationFilter;
 import com.dev24.bookstore.auth.security.JwtTokenProvider;
 import com.dev24.bookstore.auth.security.RefreshTokenPayload;
 import com.dev24.bookstore.auth.security.RefreshTokenStore;
 import com.dev24.bookstore.auth.service.AdminService;
 import com.dev24.bookstore.auth.service.CustomerService;
 import com.dev24.bookstore.auth.service.CustomerSignUpCommand;
+import com.dev24.bookstore.common.config.SecurityConfig;
 import com.dev24.bookstore.common.exception.BusinessException;
 import com.dev24.bookstore.common.exception.ErrorCode;
 
+// SecurityConfig를 명시적으로 Import해야 @EnableMethodSecurity(@PreAuthorize 인터셉터)가 이 슬라이스 컨텍스트에도 등록된다
+// (@WebMvcTest는 일반 @Configuration 빈을 자동으로 스캔하지 않는다). addFilters=false라 실제 필터 체인은
+// 여전히 돌지 않으므로 JwtAuthenticationFilter는 SecurityConfig의 생성자 의존성 충족용으로만 목 처리한다.
 @WebMvcTest(controllers = AuthController.class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(SecurityConfig.class)
 class AuthControllerTest {
 
     @Autowired
@@ -50,6 +61,8 @@ class AuthControllerTest {
     private RefreshTokenStore refreshTokenStore;
     @MockitoBean
     private AccessTokenBlacklist accessTokenBlacklist;
+    @MockitoBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
 
     // 정상 요청이면 회원가입에 성공하고 생성된 고객 정보를 응답으로 반환하는지 검증
     @Test
@@ -252,7 +265,10 @@ class AuthControllerTest {
     }
 
     // 로그아웃 시 현재 액세스 토큰의 jti가 블랙리스트에 등록되고, 리프레시 토큰이 Redis에서 삭제되는지 검증
+    // addFilters=false라 JwtAuthenticationFilter가 SecurityContext를 채워주지 않으므로 @WithMockUser로 인증 상태를 직접 주입한다
     @Test
+    @DisplayName("인증된 사용자는 로그아웃에 성공하고 토큰이 블랙리스트/삭제 처리된다")
+    @WithMockUser(username = "dev24", roles = "CUSTOMER")
     void logout_blacklistsAccessTokenAndRevokesRefreshToken() throws Exception {
         Date expiration = new Date(System.currentTimeMillis() + 60000L);
         given(jwtTokenProvider.parse("current-access-token"))
@@ -269,5 +285,25 @@ class AuthControllerTest {
 
         verify(accessTokenBlacklist).blacklist(eq("current-jti"), any());
         verify(refreshTokenStore).revoke("refresh-token-to-revoke");
+    }
+
+    // @PreAuthorize("isAuthenticated()")가 인증되지 않은 요청을 403 + A004로 거부하는지 검증.
+    // addFilters=false로 실제 필터 체인(AnonymousAuthenticationFilter 포함)이 꺼져 있으므로,
+    // 운영 환경에서 매 요청마다 채워지는 익명 인증 상태를 @WithAnonymousUser로 직접 재현한다.
+    @Test
+    @DisplayName("인증되지 않은 요청은 로그아웃에서 403으로 거부된다")
+    @WithAnonymousUser
+    void logout_unauthenticated_returnsForbidden() throws Exception {
+        mockMvc.perform(post("/api/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"refreshToken":"refresh-token-to-revoke"}
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("A004"));
+
+        verify(accessTokenBlacklist, never()).blacklist(any(), any());
+        verify(refreshTokenStore, never()).revoke(any());
     }
 }
