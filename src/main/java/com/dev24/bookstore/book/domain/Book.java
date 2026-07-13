@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -56,6 +57,16 @@ public class Book {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private BookStatus status;
+
+    // BookImage/Rating이 FK(book_id)를 소유하는 쪽(owning side), Book은 mappedBy로 참조만.
+    // 실제 초기화는 반드시 BookQueryRepositoryImpl에서 leftJoin(...).fetchJoin()으로 함께 로딩해야 한다
+    //  — spring.jpa.open-in-view=false라, fetch join 없이 getBookImage()/getRating()을 호출하면
+    // 컨트롤러 시점엔 세션이 이미 닫혀 LazyInitializationException이 발생한다.
+    @OneToOne(mappedBy = "book")
+    private BookImage bookImage;
+
+    @OneToOne(mappedBy = "book")
+    private Rating rating;
 
     public Book(String isbn, String title, String authors, String publisher, LocalDate publishedAt,
                 int price, String contents, String authorInfo, String category, BookStatus status) {

@@ -12,6 +12,8 @@ import org.springframework.util.StringUtils;
 import com.dev24.bookstore.book.domain.Book;
 import com.dev24.bookstore.book.domain.BookStatus;
 import com.dev24.bookstore.book.domain.QBook;
+import com.dev24.bookstore.book.domain.QBookImage;
+import com.dev24.bookstore.book.domain.QRating;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.types.OrderSpecifier;
 import com.querydsl.core.types.dsl.BooleanExpression;
@@ -26,6 +28,8 @@ import lombok.RequiredArgsConstructor;
 public class BookQueryRepositoryImpl implements BookQueryRepository {
 
     private static final QBook book = QBook.book;
+    private static final QBookImage bookImage = QBookImage.bookImage;
+    private static final QRating rating = QRating.rating;
 
     private final JPAQueryFactory queryFactory;
 
@@ -36,14 +40,19 @@ public class BookQueryRepositoryImpl implements BookQueryRepository {
                 .and(categoryEq(condition.category()))
                 .and(statusEq(condition.status()));
 
+        // bookImage/rating은 Book과 1:1이라 fetch join으로 행이 곱해지지 않는다(distinct() 불필요, OFFSET/LIMIT도 SQL 그대로 적용됨).
+        // 매칭되는 이미지/평점이 없는 Book도 결과에 포함돼야 하므로 INNER가 아닌 LEFT join.
         List<Book> content = queryFactory
                 .selectFrom(book)
+                .leftJoin(book.bookImage, bookImage).fetchJoin()
+                .leftJoin(book.rating, rating).fetchJoin()
                 .where(where)
                 .offset(pageable.getOffset())
                 .limit(pageable.getPageSize())
                 .orderBy(toOrderSpecifiers(pageable.getSort()))
                 .fetch();
 
+        // where 절이 bookImage/rating 필드를 참조하지 않으므로 count 쿼리는 join이 필요 없다.
         JPAQuery<Long> countQuery = queryFactory
                 .select(book.count())
                 .from(book)
