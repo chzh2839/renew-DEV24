@@ -12,6 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 @RestControllerAdvice
@@ -27,6 +28,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiResponse<Void>> handleAccessDeniedException(AccessDeniedException e) {
         ErrorCode errorCode = ErrorCode.ACCESS_DENIED;
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(ApiResponse.error(ErrorResponse.of(errorCode)));
+    }
+
+    // 예: GET /api/books?status=NOT_A_STATUS 처럼 요청 파라미터를 enum 등으로 변환할 수 없을 때
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException e) {
+        ErrorCode errorCode = ErrorCode.INVALID_TYPE_VALUE;
         return ResponseEntity.status(errorCode.getStatus())
                 .body(ApiResponse.error(ErrorResponse.of(errorCode)));
     }
