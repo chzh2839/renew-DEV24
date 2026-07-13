@@ -12,17 +12,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.dev24.bookstore.auth.security.JwtAuthenticationFilter;
+import com.dev24.bookstore.book.controller.response.BookResponse;
 import com.dev24.bookstore.book.domain.Book;
 import com.dev24.bookstore.book.domain.BookStatus;
 import com.dev24.bookstore.book.repository.BookSearchCondition;
 import com.dev24.bookstore.book.service.BookQueryService;
+import com.dev24.bookstore.book.service.BookSearchResult;
+import com.dev24.bookstore.common.exception.BusinessException;
+import com.dev24.bookstore.common.exception.ErrorCode;
 
 // @WebMvcTest는 @Component인 JwtAuthenticationFilter(Filter 구현체)도 자동 스캔하므로,
 // addFilters=false로 실제 필터 체인은 안 타지만 빈 생성 자체를 위해 목 처리가 필요하다 (AuthControllerTest와 동일 패턴).
@@ -46,8 +47,9 @@ class BookControllerTest {
     // 응답이 ApiResponse<Page<BookResponse>> 형태로 내려오는지 검증
     @Test
     void search_returnsPagedBooks() throws Exception {
-        Page<Book> page = new PageImpl<>(List.of(book("9788983920774", "자바의 정석")), PageRequest.of(0, 20), 1);
-        given(bookService.search(any(BookSearchCondition.class), any())).willReturn(page);
+        BookSearchResult result = new BookSearchResult(
+                List.of(BookResponse.from(book("9788983920774", "자바의 정석"))), 1);
+        given(bookService.search(any(BookSearchCondition.class), any())).willReturn(result);
 
         mockMvc.perform(get("/api/books")
                         .param("keyword", "자바")
@@ -69,5 +71,28 @@ class BookControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("C002"));
+    }
+
+    // 존재하는 id로 상세 조회 시 BookResponse가 그대로 내려오는지 검증
+    @Test
+    void detail_existingId_returnsBook() throws Exception {
+        given(bookService.getDetail(1L)).willReturn(BookResponse.from(book("9788983920774", "자바의 정석")));
+
+        mockMvc.perform(get("/api/books/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.title").value("자바의 정석"));
+    }
+
+    // 존재하지 않는 id면 서비스가 던지는 BusinessException(ENTITY_NOT_FOUND)이 GlobalExceptionHandler를 거쳐
+    // 404 + C004로 응답되는지 검증
+    @Test
+    void detail_missingId_returnsNotFound() throws Exception {
+        given(bookService.getDetail(999L)).willThrow(new BusinessException(ErrorCode.ENTITY_NOT_FOUND));
+
+        mockMvc.perform(get("/api/books/999"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("C004"));
     }
 }
