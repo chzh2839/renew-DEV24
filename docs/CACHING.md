@@ -51,7 +51,7 @@ Page<BookResponse>로 재구성 후 응답
 6. [테스트 전략](#6-테스트-전략)
 7. [캐시 히트/미스 응답시간 실측](#7-캐시-히트미스-응답시간-실측)
 8. [직접 실행해보기](#8-직접-실행해보기)
-9. [범위 밖으로 남긴 것](#9-범위-밖으로-남긴-것)
+9. [수정 시 캐시 무효화 (`@CacheEvict`)](#9-수정-시-캐시-무효화-cacheevict)
 
 ## 1. 왜 `StringRedisTemplate` 대신 Spring Cache(`@Cacheable`)인가
 
@@ -336,6 +336,22 @@ docker compose exec redis redis-cli KEYS "*"
 docker compose exec redis redis-cli GET "bookDetail::1"   # JSON으로 저장된 BookResponse 확인
 ```
 
-## 9. 범위 밖으로 남긴 것
+## 9. 수정 시 캐시 무효화 (`@CacheEvict`)
 
-- **`@CacheEvict`**: MODERNIZATION_PLAN.md Phase 3의 다음 체크리스트 항목. 현재 도서 등록/수정 엔드포인트 자체가 없어(`BookSeedService`는 최초 1회 시딩 배치일 뿐, 실시간 쓰기 경로가 아님) 지금은 무효화할 쓰기 경로가 없다. 쓰기 엔드포인트가 생기면 `@CacheEvict(cacheNames = {"bookSearch", "bookDetail"}, ...)`를 그 메서드에 붙이면 된다.
+도서 수정(관리자 전용 `PUT /api/books/{id}`)이 생기면서 `bookDetail`/`bookSearch` 캐시가 오래된 값을 들고 있지 않도록 `BookCommandService.update()`에 무효화를 붙였다:
+
+```java
+@Transactional
+@Caching(evict = {
+        @CacheEvict(cacheNames = BookCacheConfig.BOOK_DETAIL_CACHE, key = "#id"),
+        @CacheEvict(cacheNames = BookCacheConfig.BOOK_SEARCH_CACHE, allEntries = true)
+})
+public BookResponse update(Long id, BookUpdateRequest request) { ... }
+```
+
+두 캐시를 다르게 다루는 이유:
+- **`bookDetail`은 특정 id 하나만 지운다(`key = "#id"`)**:<br>
+  - `BookQueryService.getDetail(Long id)`가 쓰는 캐시 키와 동일한 방식(단일 파라미터 기본 키)이라, 수정된 도서의 엔트리만 정확히 골라 지울 수 있다. 다른 도서의 상세 캐시는 그대로 살아있는다.
+- **`bookSearch`는 통째로 지운다(`allEntries = true`)**:<br>
+  - 이 캐시의 키는 검색조건(`keyword`/`category`/`status`)과 페이징 조합마다 달라진다. 방금 수정한 도서가 어떤 검색 결과 목록들에 끼어 있었는지(예: 카테고리가 바뀌었으면 예전 카테고리 검색 결과에서는 빠지고 새 카테고리 검색 결과엔 나타나야 함) 일일이 추적할 방법이 없어서, 특정 엔트리만 골라 지우는 대신 전체를 비우고 다음 검색 때 새로 채우는 쪽을 택했다.
+

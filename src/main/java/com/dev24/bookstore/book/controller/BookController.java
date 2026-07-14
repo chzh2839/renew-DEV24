@@ -4,18 +4,25 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.dev24.bookstore.book.controller.request.BookUpdateRequest;
 import com.dev24.bookstore.book.controller.response.BookResponse;
 import com.dev24.bookstore.book.domain.BookStatus;
 import com.dev24.bookstore.book.repository.BookSearchCondition;
+import com.dev24.bookstore.book.service.BookCommandService;
 import com.dev24.bookstore.book.service.BookQueryService;
 import com.dev24.bookstore.book.service.BookSearchResult;
 import com.dev24.bookstore.common.response.ApiResponse;
+
+import jakarta.validation.Valid;
 
 import lombok.RequiredArgsConstructor;
 
@@ -25,6 +32,7 @@ import lombok.RequiredArgsConstructor;
 public class BookController {
 
     private final BookQueryService bookService;
+    private final BookCommandService bookCommandService;
 
     // 동적 검색/필터(keyword/category/status) + Pageable 표준 페이징 - 레거시 rownum 페이징 대체.
     // BookQueryService.search()는 @Cacheable 캐시 값으로 Page가 아닌 BookSearchResult를 반환하므로
@@ -44,5 +52,12 @@ public class BookController {
     @GetMapping("/{id}")
     public ApiResponse<BookResponse> detail(@PathVariable Long id) {
         return ApiResponse.success(bookService.getDetail(id));
+    }
+
+    // 도서 수정 - 관리자 전용. BookCommandService.update()가 캐시(bookDetail/bookSearch) 무효화까지 담당.
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ApiResponse<BookResponse> update(@PathVariable Long id, @Valid @RequestBody BookUpdateRequest request) {
+        return ApiResponse.success(bookCommandService.update(id, request));
     }
 }

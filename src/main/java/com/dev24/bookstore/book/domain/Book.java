@@ -81,4 +81,18 @@ public class Book {
         this.category = category;
         this.status = status;
     }
+
+    // isbn은 도서의 불변 식별자로 취급 - 수정 대상에서 제외
+    public void update(String title, String authors, String publisher, LocalDate publishedAt,
+                        int price, String contents, String authorInfo, String category, BookStatus status) {
+        this.title = title;
+        this.authors = authors;
+        this.publisher = publisher;
+        this.publishedAt = publishedAt;
+        this.price = price;
+        this.contents = contents;
+        this.authorInfo = authorInfo;
+        this.category = category;
+        this.status = status;
+    }
 }
