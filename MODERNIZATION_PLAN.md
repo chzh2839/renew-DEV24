@@ -142,6 +142,8 @@
 - Actuator+Micrometer
 - 서비스 계층 스타일 통일: auth 모듈(`CustomerService`/`AdminService` 인터페이스+Impl)을 book 모듈(`BookQueryService`/`BookCommandService` 등 interface 없는 plain class) 스타일로 맞출지 검토 - 구현체가 하나뿐이라 인터페이스의 다형성 이득이 없음
 - 리프레시 토큰 회전(rotation) — 재사용 감지로 탈취 대응 강화
+- 재고 차감 동시성 전략 재검토: 선착순 한정판 같은 초고경합(flash sale) 시나리오에서는 낙관적 락이 재시도 폭주로 비효율적일 수 있어, 비관적 락이나 Redis 기반 원자적 카운터/분산 큐잉이 더 나을 수 있다는 트레이드오프(3절 참고) — 실제 도입 여부와, 도입한다면 전체 교체가 아니라 선착순 전용 경로로 한정할지 검토
+- 리뷰 파일 업로드
 
 ## 6. 검증 방법
 
