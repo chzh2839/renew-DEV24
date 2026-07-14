@@ -140,6 +140,7 @@
 - freeboard/qna에 리뷰 모듈 패턴 재적용
 - 도서 목록 Caffeine 캐시
 - Actuator+Micrometer
+- 서비스 계층 스타일 통일: auth 모듈(`CustomerService`/`AdminService` 인터페이스+Impl)을 book 모듈(`BookQueryService`/`BookCommandService` 등 interface 없는 plain class) 스타일로 맞출지 검토 - 구현체가 하나뿐이라 인터페이스의 다형성 이득이 없음
 - 리프레시 토큰 회전(rotation) — 재사용 감지로 탈취 대응 강화
 
 ## 6. 검증 방법
