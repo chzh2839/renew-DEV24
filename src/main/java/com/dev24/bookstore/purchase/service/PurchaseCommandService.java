@@ -54,10 +54,10 @@ public class PurchaseCommandService {
                 request.paymentMethod(), totalPrice));
 
         for (Cart cartItem : cartItems) {
-            // 재고 확인 및 차감
+            // 재고 확인 및 차감 - 구매 가능 수량은 재고 전량이 아닌 (재고 - 안전재고)
             Stock stock = stockRepository.findByBookId(cartItem.getBook().getId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.ENTITY_NOT_FOUND));
-            if (stock.getQuantity() < cartItem.getQuantity()) {
+            if (stock.getQuantity() - stock.getSafetyStock() < cartItem.getQuantity()) {
                 throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
             }
             stock.decreaseQuantity(cartItem.getQuantity());

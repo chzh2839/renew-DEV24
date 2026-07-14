@@ -17,7 +17,8 @@ public enum ErrorCode {
     INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "A003", "유효하지 않거나 만료된 리프레시 토큰입니다"),
     ACCESS_DENIED(HttpStatus.FORBIDDEN, "A004", "접근 권한이 없습니다"),
 
-    INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "P001", "재고가 부족합니다");
+    INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "P001", "재고가 부족합니다"),
+    STOCK_CONFLICT(HttpStatus.CONFLICT, "P002", "재고 처리 중 충돌이 발생했습니다. 다시 시도해주세요");
 
     private final HttpStatus status;
     private final String code;

@@ -7,6 +7,7 @@ import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -28,6 +29,15 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiResponse<Void>> handleAccessDeniedException(AccessDeniedException e) {
         ErrorCode errorCode = ErrorCode.ACCESS_DENIED;
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(ApiResponse.error(ErrorResponse.of(errorCode)));
+    }
+
+    // Stock.version 낙관적 락 충돌 - 동시 구매로 두 트랜잭션이 같은 재고 row를 갱신하려 할 때 JPA가 던짐
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleObjectOptimisticLockingFailureException(
+            ObjectOptimisticLockingFailureException e) {
+        ErrorCode errorCode = ErrorCode.STOCK_CONFLICT;
         return ResponseEntity.status(errorCode.getStatus())
                 .body(ApiResponse.error(ErrorResponse.of(errorCode)));
     }

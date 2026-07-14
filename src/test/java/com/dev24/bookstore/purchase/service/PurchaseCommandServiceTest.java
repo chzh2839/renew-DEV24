@@ -119,6 +119,26 @@ class PurchaseCommandServiceTest {
         verify(cartRepository, never()).deleteAll(any());
     }
 
+    // 재고는 요청 수량보다 많아도 (재고 - 안전재고)보다 요청 수량이 크면 INSUFFICIENT_STOCK을 던지는지 검증
+    // (quantity만 보던 예전 로직이라면 10 >= 3이라 통과했을 케이스)
+    @Test
+    void purchase_belowSafetyStockThreshold_throwsInsufficientStock() {
+        Customer customer = customer(6L);
+        Book book = book(6L, "9000000000206");
+        Cart cartItem = new Cart(customer, book, 3, 30000);
+        Stock stock = new Stock(book, new Admin("admin1", "encoded", "관리자"), 10, 12000, 8);
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(cartRepository.findAllById(List.of(1L))).willReturn(List.of(cartItem));
+        given(stockRepository.findByBookId(book.getId())).willReturn(Optional.of(stock));
+
+        assertThatThrownBy(() -> purchaseCommandService.purchase("customer1", request(List.of(1L))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.INSUFFICIENT_STOCK);
+
+        verify(cartRepository, never()).deleteAll(any());
+    }
+
     // 다른 고객 소유의 장바구니 항목이면 ENTITY_NOT_FOUND를 던지는지 검증
     // (403이 아닌 404로 응답해 "존재하지만 내 것이 아니다"라는 사실 자체를 감춘다)
     @Test
