@@ -1,7 +1,10 @@
-# 구매완료 이벤트(NATS JetStream 발행/구독) 가이드
+# 구매완료/재고부족 이벤트(NATS JetStream 발행/구독) 가이드
 
-`POST /api/purchases` 구매 확정 후, 적립금 지급/알림처럼 주문 확정의 원자성 대상이 아닌 부가 처리를 `OrderCompletedEvent`로 NATS JetStream에 발행하고 별도 컨슈머가 비동기로 소비하는 구조다.<br>
-`com.dev24.bookstore.purchase` 패키지(`event`/`config`)와 `com.dev24.bookstore.auth.domain.Customer`가 핵심이다.
+`POST /api/purchases` 구매 확정 후, 적립금 지급/알림처럼 주문 확정의 원자성 대상이 아닌 부가 처리를 NATS JetStream에 발행하고 별도 컨슈머가 비동기로 소비하는 구조다. 같은 발행/구독 패턴이 두 가지 시나리오에 재사용된다:
+- **`OrderCompletedEvent`**: 구매 완료 → 적립금 지급 + 알림
+- **`LowStockEvent`**: 재고가 안전재고 이하로 처음 떨어지는 순간 → 관리자에게 재입고 알림
+
+`com.dev24.bookstore.purchase` 패키지(`event`/`config`)와 `com.dev24.bookstore.auth.domain.Customer`/`Admin`이 핵심이다.
 
 ## 한눈에 보는 전체 흐름
 
@@ -39,6 +42,9 @@ OrderCompletedEventConsumer  (앱 기동 시 durable push consumer로 미리 구
 | `OrderCompletedEventConsumer` | 앱 기동 시 구독, 적립금 지급 + 알림(시뮬레이션) | `purchase/event/OrderCompletedEventConsumer.java` |
 | `PurchaseCommandService.purchase()` | 커밋 직전 `ApplicationEventPublisher`로 발행 트리거 | `purchase/service/PurchaseCommandService.java` |
 | `Customer.point` | 적립금 컬럼(`V7__add_point_to_customer.sql`) | `auth/domain/Customer.java` |
+| `LowStockEvent` | 안전재고 이하 도달 시 오가는 페이로드(record) | `purchase/event/LowStockEvent.java` |
+| `LowStockEventPublisher` | 트랜잭션 커밋 후에만 실제 NATS 발행(subject `orders.low-stock`) | `purchase/event/LowStockEventPublisher.java` |
+| `LowStockEventConsumer` | 앱 기동 시 구독, 관리자에게 재입고 알림(시뮬레이션) | `purchase/event/LowStockEventConsumer.java` |
 
 ## 왜 트랜잭션 커밋 "이후"에 발행해야 하는가
 
@@ -213,6 +219,33 @@ public class OrderCompletedEventConsumer {
   - `@Transactional`은 스프링이 클래스를 감싸 만든 **프록시**가 대신 동작시켜주는 기능이다. 그런데 `this::handle`처럼 이 클래스가 **자기 메서드를 직접 참조**해서 NATS에 콜백으로 넘기면, 그 호출은 프록시를 거치지 않고 원본 객체로 바로 들어온다 — 그래서 `handle()`이나 `process()`에 `@Transactional`을 붙여봤자 조용히 무시된다(둘 다 이 클래스 "안"에서 일어나는 호출이라 마찬가지).
   - 그래서 이 클래스는 애초에 `@Transactional`을 안 쓴다. 대신 `customerRepository.save(customer)`를 호출하는데, `customerRepository`는 별도로 주입받은 **다른 빈**이라 정상적으로 프록시를 거치고, Spring Data JPA가 만들어주는 그 구현체(`SimpleJpaRepository`) 자체에 이미 `@Transactional`이 걸려 있다. 그래서 `save()` 호출 하나로 트랜잭션 문제가 자연스럽게 해결된다.
 
+## `LowStockEvent` — 같은 패턴을 두 번째 시나리오에 재사용
+
+`LowStockEvent`는 위 1~7단계와 완전히 동일한 구조(record 페이로드 → 커밋 후 발행 → durable consumer 구독)를 그대로 따른다. 다른 점은 딱 두 가지뿐이다.
+
+**1. subject만 다르고 스트림은 그대로 재사용한다** — `NatsConfig`의 스트림이 이미 `subjects("orders.>")`로 잡혀 있어서, `orders.low-stock`이라는 새 subject를 받기 위해 `NatsConfig`를 손댈 필요가 없다. 발행자(`LowStockEventPublisher`)/컨슈머(`LowStockEventConsumer`)만 `OrderCompletedEventPublisher`/`OrderCompletedEventConsumer`를 그대로 복사해 subject와 페이로드 타입만 바꾸면 된다.
+
+**2. 발행 조건이 "상태"가 아니라 "전이(transition)"다** — 단순히 "지금 재고가 안전재고 이하다"가 아니라 "방금 그 경계를 처음 넘었다"일 때만 발행해야 한다. `PurchaseCommandService.purchase()`에서 차감 전/후 수량을 비교한다:
+```java
+int quantityBeforeDecrease = stock.getQuantity();
+stock.decreaseQuantity(cartItem.getQuantity());
+
+// 안전재고 이하로 "떨어지는 순간"에만 발행 - 이미 안전재고 이하인 상태에서 추가 구매가 계속 들어와도
+// 재발행하지 않아 관리자에게 같은 알림이 반복되는 걸 막는다.
+if (quantityBeforeDecrease > stock.getSafetyStock() && stock.getQuantity() <= stock.getSafetyStock()) {
+    applicationEventPublisher.publishEvent(new LowStockEvent(stock.getBook().getId(),
+            stock.getAdmin().getId(), stock.getQuantity(), stock.getSafetyStock(), LocalDateTime.now()));
+}
+```
+`beforeQuantity > safetyStock`(전에는 여유 있었음)이면서 `afterQuantity <= safetyStock`(지금은 임계치 이하)일 때만 참이 된다 — 이미 임계치 이하인 상태에서 또 구매가 들어와도(`beforeQuantity`가 이미 `safetyStock` 이하) 조건의 앞부분이 거짓이라 재발행되지 않는다.
+
+실제로는 이 케이스가 발생하기도 쉽지 않다:<br>
+재고 검증 로직(`stock.getQuantity() - stock.getSafetyStock() < cartItem.getQuantity()`) 자체가 "구매 가능 수량 = 재고 - 안전재고"를 강제하기 때문에, 재고가 이미 안전재고 이하로 내려간 시점부터는 구매 가능 수량이 0 이하가 되어 그 이후의 구매 시도는 전부 `INSUFFICIENT_STOCK`으로 막힌다.<br>
+즉 이 전이는 한 `Stock`당 사실상 한 번만 일어난다(관리자가 재입고해서 다시 안전재고 위로 올라간 뒤 또 내려가는 경우는 예외).
+
+**컨슈머 쪽 차이**:<br>
+`LowStockEventConsumer.process()`는 `CustomerRepository` 대신 `AdminRepository`로 `Stock.admin`(재고를 등록한 관리자)을 조회해 알림을 남긴다 — 적립금처럼 DB에 반영할 상태 변화가 없어 로그만 남기고 끝난다(그래서 통합 테스트는 따로 만들지 않고, 이미 `OrderCompletedEventIntegrationTest`가 검증한 발행-구독 배관을 그대로 신뢰하고 단위 테스트만 둔다).
+
 ## 커넥션 실패가 앱 전체를 죽이지 않게 (`app.nats.enabled`)
 
 `Nats.connect(url)`은 빈이 만들어지는 즉시 연결을 시도하고, 실패하면 예외를 던져 **빈 생성 자체가 실패**한다(Redis처럼 최초 사용 시점까지 연결을 미루는 지연 연결 모드가 없음).<br>
@@ -270,4 +303,4 @@ await().atMost(Duration.ofSeconds(10))
 - 실제 알림 채널(이메일/SMS/푸시) 연동 — 로그로 시뮬레이션만 한다.
 - 적립금 정책 고도화(등급별 차등 등) — 결제금액의 1% 고정 예시.
 - Outbox 패턴 등 "DB 커밋"과 "NATS 발행" 사이의 완전한 원자성 보장 — 발행 실패는 로그만 남기고 유실을 감수한다.
-- `LowStockEvent` 발행 — 이 문서의 패턴(스트림 subject `orders.>` 재사용)을 그대로 적용하면 된다.
+- 관리자가 실제로 재고를 다시 채우는 재입고 기능 자체 — `LowStockEvent`는 "알림"까지만 담당한다.

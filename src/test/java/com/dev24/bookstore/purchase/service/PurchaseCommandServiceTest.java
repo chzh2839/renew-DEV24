@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -14,6 +15,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -31,6 +33,7 @@ import com.dev24.bookstore.purchase.controller.response.PurchaseResponse;
 import com.dev24.bookstore.purchase.domain.Cart;
 import com.dev24.bookstore.purchase.domain.Stock;
 import com.dev24.bookstore.purchase.domain.enums.PaymentMethod;
+import com.dev24.bookstore.purchase.event.LowStockEvent;
 import com.dev24.bookstore.purchase.repository.CartRepository;
 import com.dev24.bookstore.purchase.repository.PurchaseItemRepository;
 import com.dev24.bookstore.purchase.repository.PurchaseRepository;
@@ -140,6 +143,57 @@ class PurchaseCommandServiceTest {
                 .isEqualTo(ErrorCode.INSUFFICIENT_STOCK);
 
         verify(cartRepository, never()).deleteAll(any());
+    }
+
+    // 구매로 재고가 안전재고 이하로 "처음 떨어지는" 순간엔 LowStockEvent가 발행되는지 검증
+    @Test
+    void purchase_crossesSafetyStockThreshold_publishesLowStockEvent() {
+        Customer customer = customer(7L);
+        Book book = book(7L, "9000000000207");
+        Admin admin = new Admin("admin1", "encoded", "관리자");
+        ReflectionTestUtils.setField(admin, "id", 1L);
+        Cart cartItem = new Cart(customer, book, 2, 20000);
+        Stock stock = new Stock(book, admin, 5, 12000, 3); // quantity=5, safetyStock=3 -> 2개 구매 시 3으로 하락(임계값 도달)
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(cartRepository.findAllById(List.of(1L))).willReturn(List.of(cartItem));
+        given(stockRepository.findByBookId(book.getId())).willReturn(Optional.of(stock));
+        given(purchaseRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
+
+        purchaseCommandService.purchase("customer1", request(List.of(1L)));
+
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(applicationEventPublisher, atLeastOnce()).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues())
+                .filteredOn(event -> event instanceof LowStockEvent)
+                .singleElement()
+                .satisfies(event -> {
+                    LowStockEvent lowStockEvent = (LowStockEvent) event;
+                    assertThat(lowStockEvent.bookId()).isEqualTo(7L);
+                    assertThat(lowStockEvent.adminId()).isEqualTo(1L);
+                    assertThat(lowStockEvent.remainingQuantity()).isEqualTo(3);
+                    assertThat(lowStockEvent.safetyStock()).isEqualTo(3);
+                });
+    }
+
+    // 구매 후에도 안전재고보다 여유가 있으면(임계값을 넘지 않으면) LowStockEvent가 발행되지 않는지 검증
+    @Test
+    void purchase_staysAboveSafetyStockThreshold_doesNotPublishLowStockEvent() {
+        Customer customer = customer(8L);
+        Book book = book(8L, "9000000000208");
+        Admin admin = new Admin("admin1", "encoded", "관리자");
+        ReflectionTestUtils.setField(admin, "id", 1L);
+        Cart cartItem = new Cart(customer, book, 2, 20000);
+        Stock stock = new Stock(book, admin, 10, 12000, 2); // quantity=10, safetyStock=2 -> 2개 구매해도 8로, 임계값 안 넘음
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(cartRepository.findAllById(List.of(1L))).willReturn(List.of(cartItem));
+        given(stockRepository.findByBookId(book.getId())).willReturn(Optional.of(stock));
+        given(purchaseRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
+
+        purchaseCommandService.purchase("customer1", request(List.of(1L)));
+
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(applicationEventPublisher, atLeastOnce()).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues()).noneMatch(event -> event instanceof LowStockEvent);
     }
 
     // 다른 고객 소유의 장바구니 항목이면 ENTITY_NOT_FOUND를 던지는지 검증

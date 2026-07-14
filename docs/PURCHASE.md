@@ -42,6 +42,12 @@
   - NATS 연결은 커넥션 생성 즉시 시도되고 실패하면 빈 생성이 실패하므로(Redis처럼 지연 연결이 아님), `app.book-seed.enabled`와 동일한 패턴으로 기본값 `false` 뒤에 숨겨뒀다 — 그래야 NATS를 안 쓰는 나머지 테스트/로컬 실행이 이 실패로 덩달아 죽지 않는다. docker-compose와 NATS 관련 테스트에서만 `true`로 켠다.
 - 통합 테스트(`OrderCompletedEventIntegrationTest`, Testcontainers Postgres+NATS)가 실제 `purchase()` 호출부터 컨슈머의 적립금 반영까지 Awaitility로 폴링 검증한다.
 
-## 지금 포함되지 않은 것 (다음 Phase 4 항목)
+## 안전재고 이하 도달 이벤트(`LowStockEvent`) NATS 발행/소비 (완료)
 
-- **`LowStockEvent`**: 차감 후 `quantity`가 `safetyStock` 이하로 떨어졌는지 확인해 발행 — `OrderCompletedEvent`와 동일한 발행/구독 패턴(스트림 subject를 `orders.>`로 잡아둬 재사용 가능)을 그대로 적용하면 된다.
+`OrderCompletedEvent`와 완전히 동일한 발행/구독 패턴을 재사용한다(자세한 설명은 `docs/NATS.md` 참고). 다른 점은 두 가지뿐이다.
+
+- **발행 조건은 "상태"가 아니라 "전이(transition)"**:<br>
+  - `purchase()`가 재고 차감 전/후 수량을 비교해 `beforeQuantity > safetyStock`이었다가 `afterQuantity <= safetyStock`이 된 경우에만 발행한다. 이미 안전재고 이하인 상태에서 추가 구매가 들어와도 재발행하지 않는다(관리자 알림 스팸 방지) — 사실 재고 검증 로직(`quantity - safetyStock < 요청수량`)이 안전재고 이하에서는 구매 자체를 막아버려서, 한 `Stock`당 이 전이는 사실상 한 번만 일어난다.
+- **subject만 다르고 스트림은 재사용**:<br>
+  - `NatsConfig`의 스트림이 이미 `subjects("orders.>")`라 `orders.low-stock`을 그대로 받는다 — `NatsConfig` 변경 없음. `LowStockEventConsumer`는 `AdminRepository`로 `Stock.admin`(재고 등록 관리자)을 조회해 재입고 알림을 로그로 남긴다(적립금처럼 DB에 남는 변화가 없어 통합 테스트는 두지 않고 단위 테스트만 둔다 — 발행-구독 배관 자체는 `OrderCompletedEventIntegrationTest`가 이미 검증).
+
