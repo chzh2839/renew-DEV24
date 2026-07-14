@@ -210,15 +210,8 @@ public class OrderCompletedEventConsumer {
 - **비즈니스 로직은 `process()`로 분리**:<br>
   - `Message`/`ack` 관심사(`handle()`)와 실제 처리(`process()`)를 나눠야 `process(OrderCompletedEvent)`를 Mockito로 바로 단위 테스트할 수 있다.
 - **셀프 호출(self-invocation) 문제 없음**:<br>
-  - 스프링의 `@Transactional`은 사실 그 메서드가 있는 클래스 자체가 아니라, 스프링이 그 클래스를 감싸서 만든 **프록시(대리인)** 객체가 대신 동작한다. 그래서 `A라는 빈 → B라는 빈`처럼 **다른 빈을 거쳐서** 호출하면 이 프록시를 지나가면서 `@Transactional`이 정상적으로 걸리지만, 같은 클래스 안에서 `this.어떤메서드()`처럼 **자기 자신을 직접 호출**하면 프록시를 건너뛰어버려서 `@Transactional`을 붙여놔도 조용히 무시된다. 이게 "셀프 호출 문제"다.
-  - 만약 이 클래스에서 `process()`에 `@Transactional`을 붙이고 `handle()`이 `this.process(event)`로(같은 클래스 안에서) 호출했다면 정확히 이 문제에 걸려서, 트랜잭션 없이 실행되는 버그가 생겼을 것이다.
-  - 실제 코드는 그렇게 하지 않았다: `process()` 자체엔 `@Transactional`을 아예 안 붙였고, 대신 `customerRepository.save(customer)`를 호출한다. `customerRepository`는 `this`가 아니라 **주입받은 별도의 빈**이라서 셀프 호출이 아니다.
-  - 참고로 `CustomerRepository`는 `JpaRepository`를 상속받는 순수 인터페이스일 뿐, 실제 구현 코드는 한 줄도 없다. 대신 Spring Data JPA가 앱 기동 시점에 이 인터페이스를 만족하는 실제 구현체(`SimpleJpaRepository`)를 자동으로 만들어 끼워 넣어준다 - `customerRepository.save(...)`를 호출하면 실제로 실행되는 코드는 이 `SimpleJpaRepository.save(...)`이고, 여기에 이미 `@Transactional`이 걸려 있다. 그래서 우리가 트랜잭션을 따로 신경 쓸 필요도, 셀프 호출 함정에 빠질 일도 없다.
-    - **그럼 `process()` 대신 `handle()`에 `@Transactional`을 붙이면 되지 않을까?**<br>
-    그것도 안 된다 - 이유가 조금 더 근본적이다.<br>
-    `handle()`은 `subscribe()`(`@PostConstruct`) 안에서 `this::handle`이라는 메서드 참조로 NATS 라이브러리에 등록된다. 그런데 스프링 빈의 생성 순서는 (1) 원본 객체 생성 → (2) 의존성 주입 → (3) `@PostConstruct` 호출 → (4) `@Transactional` 같은 AOP 프록시로 감싸기, 순서다.<br>
-    즉 `@PostConstruct`가 실행되는 시점(3번)엔 **아직 프록시가 만들어지기 전(4번 이전)**이라, 그 안에서 캡처한 `this::handle`은 프록시가 아니라 **원본(raw) 객체의 메서드**를 직접 가리킨다. 그래서 NATS가 이 메서드 참조로 `handle()`을 호출할 때는 프록시를 아예 거치지 않으므로, `handle()`에 `@Transactional`을 붙여도 `process()`에 붙인 것과 똑같이 무시된다 - 이 클래스의 어느 메서드에 붙이든 NATS를 통해 들어오는 호출 경로 자체가 프록시를 만나지 못한다.
-    - 그래서 이 문제를 진짜로 피하려면(이 프로젝트처럼 다른 빈에 위임하는 방법 외에), `AopContext.currentProxy()`로 프록시를 명시적으로 꺼내 쓰거나 자기 자신을 `@Lazy`로 다시 주입받는 우회책이 필요하다 - 여기선 그럴 필요 없이 이미 트랜잭션을 가진 `customerRepository`에 위임하는 쪽을 택했다.
+  - `@Transactional`은 스프링이 클래스를 감싸 만든 **프록시**가 대신 동작시켜주는 기능이다. 그런데 `this::handle`처럼 이 클래스가 **자기 메서드를 직접 참조**해서 NATS에 콜백으로 넘기면, 그 호출은 프록시를 거치지 않고 원본 객체로 바로 들어온다 — 그래서 `handle()`이나 `process()`에 `@Transactional`을 붙여봤자 조용히 무시된다(둘 다 이 클래스 "안"에서 일어나는 호출이라 마찬가지).
+  - 그래서 이 클래스는 애초에 `@Transactional`을 안 쓴다. 대신 `customerRepository.save(customer)`를 호출하는데, `customerRepository`는 별도로 주입받은 **다른 빈**이라 정상적으로 프록시를 거치고, Spring Data JPA가 만들어주는 그 구현체(`SimpleJpaRepository`) 자체에 이미 `@Transactional`이 걸려 있다. 그래서 `save()` 호출 하나로 트랜잭션 문제가 자연스럽게 해결된다.
 
 ## 커넥션 실패가 앱 전체를 죽이지 않게 (`app.nats.enabled`)
 
