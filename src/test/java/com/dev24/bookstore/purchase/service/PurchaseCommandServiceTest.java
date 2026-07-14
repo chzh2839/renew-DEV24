@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.dev24.bookstore.auth.domain.Admin;
@@ -48,13 +49,15 @@ class PurchaseCommandServiceTest {
     private PurchaseItemRepository purchaseItemRepository;
     @Mock
     private StockRepository stockRepository;
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
 
     private PurchaseCommandService purchaseCommandService;
 
     @BeforeEach
     void setUp() {
-        purchaseCommandService = new PurchaseCommandService(
-                customerRepository, cartRepository, purchaseRepository, purchaseItemRepository, stockRepository);
+        purchaseCommandService = new PurchaseCommandService(customerRepository, cartRepository, purchaseRepository,
+                purchaseItemRepository, stockRepository, applicationEventPublisher);
     }
 
     // 실제로는 JPA가 채워주는 id를, Mockito 단위테스트에선 리포지토리가 엔티티를 반환만 하고 영속화하지 않으므로

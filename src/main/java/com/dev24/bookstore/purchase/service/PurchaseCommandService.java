@@ -2,6 +2,7 @@ package com.dev24.bookstore.purchase.service;
 
 import java.util.List;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,6 +16,7 @@ import com.dev24.bookstore.purchase.domain.Cart;
 import com.dev24.bookstore.purchase.domain.Purchase;
 import com.dev24.bookstore.purchase.domain.PurchaseItem;
 import com.dev24.bookstore.purchase.domain.Stock;
+import com.dev24.bookstore.purchase.event.OrderCompletedEvent;
 import com.dev24.bookstore.purchase.repository.CartRepository;
 import com.dev24.bookstore.purchase.repository.PurchaseItemRepository;
 import com.dev24.bookstore.purchase.repository.PurchaseRepository;
@@ -31,6 +33,7 @@ public class PurchaseCommandService {
     private final PurchaseRepository purchaseRepository;
     private final PurchaseItemRepository purchaseItemRepository;
     private final StockRepository stockRepository;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     // 고객 검증 -> 장바구니 소유권 검증 -> 주문 헤더 생성 -> (재고 확인/차감 + 주문 라인 생성) x N -> 장바구니 삭제
     // 전체를 하나의 트랜잭션으로 묶는다 - 중간 어디서든 실패하면 이미 반영된 재고 차감/저장까지 전부 롤백된다.
@@ -67,6 +70,12 @@ public class PurchaseCommandService {
 
         // 구매한 상품은 장바구니에서 삭제
         cartRepository.deleteAll(cartItems);
+
+        // 적립금/알림은 이 트랜잭션의 원자성 대상이 아니다 - 커밋 성공이 보장된 뒤에만 NATS로 실제 발행되도록
+        // OrderCompletedEventPublisher(@TransactionalEventListener(AFTER_COMMIT))에 위임한다.
+        applicationEventPublisher.publishEvent(
+                new OrderCompletedEvent(purchase.getId(), customer.getId(), totalPrice, purchase.getPurchasedAt()));
+
         return PurchaseResponse.from(purchase);
     }
 }

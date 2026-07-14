@@ -52,6 +52,9 @@ public class Customer {
     @Column(name = "joined_at", nullable = false)
     private LocalDateTime joinedAt;
 
+    @Column(name = "point", nullable = false)
+    private int point;
+
     public Customer(String loginId, String passwordHash, String name, String nickname,
                      String email, String phone, String address, String interest, boolean newsletterYn) {
         this.loginId = loginId;
@@ -68,5 +71,10 @@ public class Customer {
 
     public Role getRole() {
         return Role.CUSTOMER;
+    }
+
+    // 구매완료 이벤트 컨슈머(OrderCompletedEventConsumer)가 적립금 지급 시 호출
+    public void addPoint(int amount) {
+        this.point += amount;
     }
 }

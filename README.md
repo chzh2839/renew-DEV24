@@ -19,6 +19,8 @@ _작성 예정 — Phase 1 이후 앱 골격이 만들어지면 다이어그램 
 - **기능 충분성**: `OrderCompletedEvent`/`LowStockEvent`는 발행-구독 기반 최종적 일관성(eventual consistency) 처리가 목적이며, JetStream의 영속 스트림 + at-least-once 전달 보장만으로 충분하다. 대용량 스트리밍·파티셔닝 같은 Kafka 고유의 강점이 필요한 워크로드는 아니다.
 - **트레이드오프**: Kafka가 업계 표준으로서 생태계·인지도 면에서는 더 유리하지만, 이 프로젝트 규모에서는 자원 효율성과 운영 단순성이 더 중요하다고 판단했다.
 
+`OrderCompletedEvent` 발행(트랜잭션 커밋 후에만 발행되는 이유, 컨슈머 구독/ack 처리, 설정 방법)은 [`docs/NATS.md`](./docs/NATS.md) 참고.
+
 ### 재고 차감 동시성 제어: 낙관적 락(`@Version`)을 택한 이유와 한계
 
 구매 모듈의 재고 차감은 비관적 락(`SELECT ... FOR UPDATE`) 대신 **낙관적 락(`@Version`)**으로 구현했다.

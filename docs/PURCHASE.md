@@ -30,7 +30,18 @@
 - **동시성 시나리오 테스트**:<br>
   - `PurchaseCommandServiceTransactionalTest#purchase_concurrentRequestsOnSameStock_onlyOneSucceedsAndNeverOversells`가 같은 `Stock`(재고 1개)에 대한 동시 구매 요청 중 하나만 성공하고, 오버셀(음수 재고)이 발생하지 않음을 검증한다.
 
+## 구매완료 이벤트(`OrderCompletedEvent`) NATS 발행/소비 (완료)
+
+- **커밋 이후에만 발행**:<br>
+  - `purchase()`는 `ApplicationEventPublisher`로 Spring 애플리케이션 이벤트만 발행해두고(아직 커밋 전),<br>
+  별도 빈인 `OrderCompletedEventPublisher`의 `@TransactionalEventListener(phase = AFTER_COMMIT)`가 트랜잭션이 실제로 커밋된 뒤에만 콜백되어 NATS JetStream(subject `orders.completed`)으로 실제 발행한다 — "주문은 롤백됐는데 이벤트는 나간" 상황을 프레임워크 차원에서 차단.
+- **별도 컨슈머가 비동기 소비**:<br>
+  - `OrderCompletedEventConsumer`가 앱 기동 시 durable push consumer로 구독해두고, 발행자와 스레드/트랜잭션을 공유하지 않고 소비한다.<br>
+  - 처리 내용은 적립금 지급(`Customer.point`, 결제금액의 1%)과 알림(로그로 시뮬레이션, 실제 채널 연동은 범위 밖). 실패 시 `message.nak()`으로 JetStream이 재전달하도록 위임.
+- **`app.nats.enabled` 플래그**:<br>
+  - NATS 연결은 커넥션 생성 즉시 시도되고 실패하면 빈 생성이 실패하므로(Redis처럼 지연 연결이 아님), `app.book-seed.enabled`와 동일한 패턴으로 기본값 `false` 뒤에 숨겨뒀다 — 그래야 NATS를 안 쓰는 나머지 테스트/로컬 실행이 이 실패로 덩달아 죽지 않는다. docker-compose와 NATS 관련 테스트에서만 `true`로 켠다.
+- 통합 테스트(`OrderCompletedEventIntegrationTest`, Testcontainers Postgres+NATS)가 실제 `purchase()` 호출부터 컨슈머의 적립금 반영까지 Awaitility로 폴링 검증한다.
+
 ## 지금 포함되지 않은 것 (다음 Phase 4 항목)
 
-- **`OrderCompletedEvent`(NATS JetStream)**: 적립금/알림은 이 트랜잭션의 원자성 대상이 아니다 — 커밋 "이후"에 비동기로 발행해야 한다(최종적 일관성으로 충분). `purchase()`가 반환하기 직전, 커밋 성공이 보장된 지점에 발행 코드가 들어갈 자리다.
-- **`LowStockEvent`**: 차감 후 `quantity`가 `safetyStock` 이하로 떨어졌는지 확인해 발행.
+- **`LowStockEvent`**: 차감 후 `quantity`가 `safetyStock` 이하로 떨어졌는지 확인해 발행 — `OrderCompletedEvent`와 동일한 발행/구독 패턴(스트림 subject를 `orders.>`로 잡아둬 재사용 가능)을 그대로 적용하면 된다.

@@ -55,6 +55,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: bookstore
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
+      APP_NATS_ENABLED: "true"
       APP_NATS_URL: nats://nats:4222
       APP_JWT_SECRET: ${APP_JWT_SECRET:?APP_JWT_SECRET is not set - copy .env.example to .env and fill it in}
       APP_KAKAO_REST_API_KEY: ${APP_KAKAO_REST_API_KEY:-}
