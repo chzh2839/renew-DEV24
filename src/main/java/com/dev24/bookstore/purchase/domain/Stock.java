@@ -65,4 +65,9 @@ public class Stock {
         this.safetyStock = safetyStock;
         this.registeredAt = LocalDateTime.now();
     }
+
+    // 차감 가능 여부 검증은 서비스 레이어의 책임 - 엔티티는 순수 데이터 홀더로 유지
+    public void decreaseQuantity(int amount) {
+        this.quantity -= amount;
+    }
 }

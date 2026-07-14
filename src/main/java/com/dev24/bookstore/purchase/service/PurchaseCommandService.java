@@ -1,0 +1,72 @@
+package com.dev24.bookstore.purchase.service;
+
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.dev24.bookstore.auth.domain.Customer;
+import com.dev24.bookstore.auth.repository.CustomerRepository;
+import com.dev24.bookstore.common.exception.BusinessException;
+import com.dev24.bookstore.common.exception.ErrorCode;
+import com.dev24.bookstore.purchase.controller.request.PurchaseRequest;
+import com.dev24.bookstore.purchase.controller.response.PurchaseResponse;
+import com.dev24.bookstore.purchase.domain.Cart;
+import com.dev24.bookstore.purchase.domain.Purchase;
+import com.dev24.bookstore.purchase.domain.PurchaseItem;
+import com.dev24.bookstore.purchase.domain.Stock;
+import com.dev24.bookstore.purchase.repository.CartRepository;
+import com.dev24.bookstore.purchase.repository.PurchaseItemRepository;
+import com.dev24.bookstore.purchase.repository.PurchaseRepository;
+import com.dev24.bookstore.purchase.repository.StockRepository;
+
+import lombok.RequiredArgsConstructor;
+
+@Service
+@RequiredArgsConstructor
+public class PurchaseCommandService {
+
+    private final CustomerRepository customerRepository;
+    private final CartRepository cartRepository;
+    private final PurchaseRepository purchaseRepository;
+    private final PurchaseItemRepository purchaseItemRepository;
+    private final StockRepository stockRepository;
+
+    // 고객 검증 -> 장바구니 소유권 검증 -> 주문 헤더 생성 -> (재고 확인/차감 + 주문 라인 생성) x N -> 장바구니 삭제
+    // 전체를 하나의 트랜잭션으로 묶는다 - 중간 어디서든 실패하면 이미 반영된 재고 차감/저장까지 전부 롤백된다.
+    @Transactional
+    public PurchaseResponse purchase(String loginId, PurchaseRequest request) {
+        Customer customer = customerRepository.findByLoginId(loginId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ENTITY_NOT_FOUND));
+
+        List<Cart> cartItems = cartRepository.findAllById(request.cartItemIds());
+        // 장바구니 소유권 검증
+        if (cartItems.size() != request.cartItemIds().size()
+                || cartItems.stream().anyMatch(cartItem -> !cartItem.getCustomer().getId().equals(customer.getId()))) {
+            // 존재하지 않는 항목과 타인 소유 항목을 구분하지 않고 동일하게 404로 응답해 존재 여부 자체를 감춘다
+            throw new BusinessException(ErrorCode.ENTITY_NOT_FOUND);
+        }
+
+        int totalPrice = cartItems.stream().mapToInt(Cart::getPriceSnapshot).sum();
+        // 주문 생성
+        Purchase purchase = purchaseRepository.save(new Purchase(customer, request.senderName(), request.senderPhone(),
+                request.receiverName(), request.receiverPhone(), request.zipcode(), request.address(),
+                request.paymentMethod(), totalPrice));
+
+        for (Cart cartItem : cartItems) {
+            // 재고 확인 및 차감
+            Stock stock = stockRepository.findByBookId(cartItem.getBook().getId())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.ENTITY_NOT_FOUND));
+            if (stock.getQuantity() < cartItem.getQuantity()) {
+                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+            }
+            stock.decreaseQuantity(cartItem.getQuantity());
+            purchaseItemRepository.save(
+                    new PurchaseItem(purchase, cartItem.getBook(), cartItem.getQuantity(), cartItem.getPriceSnapshot()));
+        }
+
+        // 구매한 상품은 장바구니에서 삭제
+        cartRepository.deleteAll(cartItems);
+        return PurchaseResponse.from(purchase);
+    }
+}

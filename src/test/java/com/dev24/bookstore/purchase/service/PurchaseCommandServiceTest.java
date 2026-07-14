@@ -1,0 +1,163 @@
+package com.dev24.bookstore.purchase.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import com.dev24.bookstore.auth.domain.Admin;
+import com.dev24.bookstore.auth.domain.Customer;
+import com.dev24.bookstore.auth.repository.CustomerRepository;
+import com.dev24.bookstore.book.domain.Book;
+import com.dev24.bookstore.book.domain.BookStatus;
+import com.dev24.bookstore.common.exception.BusinessException;
+import com.dev24.bookstore.common.exception.ErrorCode;
+import com.dev24.bookstore.purchase.controller.request.PurchaseRequest;
+import com.dev24.bookstore.purchase.controller.response.PurchaseResponse;
+import com.dev24.bookstore.purchase.domain.Cart;
+import com.dev24.bookstore.purchase.domain.Stock;
+import com.dev24.bookstore.purchase.domain.enums.PaymentMethod;
+import com.dev24.bookstore.purchase.repository.CartRepository;
+import com.dev24.bookstore.purchase.repository.PurchaseItemRepository;
+import com.dev24.bookstore.purchase.repository.PurchaseRepository;
+import com.dev24.bookstore.purchase.repository.StockRepository;
+
+@ExtendWith(MockitoExtension.class)
+class PurchaseCommandServiceTest {
+
+    @Mock
+    private CustomerRepository customerRepository;
+    @Mock
+    private CartRepository cartRepository;
+    @Mock
+    private PurchaseRepository purchaseRepository;
+    @Mock
+    private PurchaseItemRepository purchaseItemRepository;
+    @Mock
+    private StockRepository stockRepository;
+
+    private PurchaseCommandService purchaseCommandService;
+
+    @BeforeEach
+    void setUp() {
+        purchaseCommandService = new PurchaseCommandService(
+                customerRepository, cartRepository, purchaseRepository, purchaseItemRepository, stockRepository);
+    }
+
+    // 실제로는 JPA가 채워주는 id를, Mockito 단위테스트에선 리포지토리가 엔티티를 반환만 하고 영속화하지 않으므로
+    // 소유권 비교(getId().equals(...))가 의미를 가지도록 리플렉션으로 직접 채워준다.
+    private Customer customer(long id) {
+        Customer customer = new Customer("customer1", "encoded", "홍길동", "길동이",
+                "customer1@example.com", "010-0000-0000", "서울시", "소설", false);
+        ReflectionTestUtils.setField(customer, "id", id);
+        return customer;
+    }
+
+    private Book book(long id, String isbn) {
+        Book book = new Book(isbn, "자바의 정석", "남궁성", "도우출판", LocalDate.of(2024, 1, 1),
+                10000, "내용", null, "프로그래밍", BookStatus.ACTIVE);
+        ReflectionTestUtils.setField(book, "id", id);
+        return book;
+    }
+
+    private PurchaseRequest request(List<Long> cartItemIds) {
+        return new PurchaseRequest(cartItemIds, "홍길동", "010-1111-1111", "홍길동", "010-1111-1111",
+                "06236", "서울시 강남구", PaymentMethod.CREDIT_CARD);
+    }
+
+    // 재고가 충분하면 주문(Purchase/PurchaseItem)이 생성되고, 재고가 차감되고, 장바구니 항목이 삭제되는지 검증
+    @Test
+    void purchase_sufficientStock_createsPurchaseAndDecrementsStockAndClearsCart() {
+        Customer customer = customer(1L);
+        Book book = book(1L, "9000000000201");
+        Cart cartItem = new Cart(customer, book, 2, 20000);
+        Stock stock = new Stock(book, new Admin("admin1", "encoded", "관리자"), 10, 12000, 2);
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(cartRepository.findAllById(List.of(1L))).willReturn(List.of(cartItem));
+        given(stockRepository.findByBookId(book.getId())).willReturn(Optional.of(stock));
+        given(purchaseRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
+
+        PurchaseResponse response = purchaseCommandService.purchase("customer1", request(List.of(1L)));
+
+        assertThat(response.totalPrice()).isEqualTo(20000);
+        assertThat(response.paymentMethod()).isEqualTo(PaymentMethod.CREDIT_CARD);
+        assertThat(stock.getQuantity()).isEqualTo(8);
+        verify(purchaseItemRepository).save(any());
+        verify(cartRepository).deleteAll(List.of(cartItem));
+    }
+
+    // 재고가 부족하면 INSUFFICIENT_STOCK을 던지고, 그 이후 단계인 장바구니 삭제는 호출되지 않는지 검증
+    @Test
+    void purchase_insufficientStock_throwsAndDoesNotClearCart() {
+        Customer customer = customer(2L);
+        Book book = book(2L, "9000000000202");
+        Cart cartItem = new Cart(customer, book, 5, 50000);
+        Stock stock = new Stock(book, new Admin("admin1", "encoded", "관리자"), 1, 12000, 0);
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(cartRepository.findAllById(List.of(1L))).willReturn(List.of(cartItem));
+        given(stockRepository.findByBookId(book.getId())).willReturn(Optional.of(stock));
+        given(purchaseRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
+
+        assertThatThrownBy(() -> purchaseCommandService.purchase("customer1", request(List.of(1L))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.INSUFFICIENT_STOCK);
+
+        verify(cartRepository, never()).deleteAll(any());
+    }
+
+    // 다른 고객 소유의 장바구니 항목이면 ENTITY_NOT_FOUND를 던지는지 검증
+    // (403이 아닌 404로 응답해 "존재하지만 내 것이 아니다"라는 사실 자체를 감춘다)
+    @Test
+    void purchase_cartItemNotOwnedByCustomer_throwsEntityNotFound() {
+        Customer customer = customer(3L);
+        Customer otherCustomer = new Customer("other", "encoded", "타인", "타인닉네임",
+                "other@example.com", "010-2222-2222", "서울시", "소설", false);
+        ReflectionTestUtils.setField(otherCustomer, "id", 4L);
+        Book book = book(3L, "9000000000203");
+        Cart othersCartItem = new Cart(otherCustomer, book, 1, 10000);
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(cartRepository.findAllById(List.of(1L))).willReturn(List.of(othersCartItem));
+
+        assertThatThrownBy(() -> purchaseCommandService.purchase("customer1", request(List.of(1L))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.ENTITY_NOT_FOUND);
+    }
+
+    // 요청한 cartItemIds 중 존재하지 않는 id가 섞여 있으면(조회 결과 개수가 다르면) ENTITY_NOT_FOUND를 던지는지 검증
+    @Test
+    void purchase_missingCartItemId_throwsEntityNotFound() {
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer(5L)));
+        given(cartRepository.findAllById(List.of(1L, 2L))).willReturn(List.of());
+
+        assertThatThrownBy(() -> purchaseCommandService.purchase("customer1", request(List.of(1L, 2L))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.ENTITY_NOT_FOUND);
+    }
+
+    // 인증은 됐지만 대응하는 Customer 레코드가 없는 loginId면 ENTITY_NOT_FOUND를 던지는지 검증
+    @Test
+    void purchase_unknownLoginId_throwsEntityNotFound() {
+        given(customerRepository.findByLoginId("unknown")).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> purchaseCommandService.purchase("unknown", request(List.of(1L))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.ENTITY_NOT_FOUND);
+    }
+}
