@@ -47,4 +47,10 @@ public class Cart {
         this.quantity = quantity;
         this.priceSnapshot = priceSnapshot;
     }
+
+    // 이미 담긴 책을 또 담을 때(merge) 수량/라인합계를 더한다 - 재고 검증은 서비스 레이어의 책임(Stock과 동일 원칙)
+    public void increaseQuantity(int amount, int additionalPrice) {
+        this.quantity += amount;
+        this.priceSnapshot += additionalPrice;
+    }
 }
