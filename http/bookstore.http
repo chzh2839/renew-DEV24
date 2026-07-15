@@ -1,0 +1,67 @@
+### 변수
+@host = http://localhost:8080
+
+### 1. 고객 회원가입 - email은 Mailpit에서 실제로 확인할 것이므로 실존하지 않아도 되는 형식만 맞는 주소로
+### (현재 로컬 DB엔 testcustomer(id=2)가 이미 가입되어 있음 - 재실행하면 loginId 중복 에러, 2번부터 실행해도 됨)
+POST {{host}}/api/auth/customers/signup
+Content-Type: application/json
+
+{
+  "loginId": "testcustomer",
+  "password": "password123!",
+  "name": "홍길동",
+  "nickname": "gildong",
+  "email": "testcustomer@example.com",
+  "phone": "010-1234-5678",
+  "address": "서울특별시 강남구 테헤란로 152",
+  "interest": "소설",
+  "newsletterYn": true
+}
+
+### 2. 고객 로그인 - accessToken을 전역 변수로 저장해 아래 요청들에서 재사용
+POST {{host}}/api/auth/customers/login
+Content-Type: application/json
+
+{
+  "loginId": "testcustomer",
+  "password": "password123!"
+}
+
+> {%
+    client.global.set("accessToken", response.body.data.accessToken);
+%}
+
+### 3. 도서 목록 조회
+GET {{host}}/api/books?size=5
+Authorization: Bearer {{accessToken}}
+
+### 4. 장바구니 담기 - 응답의 cart.id를 전역 변수로 저장해 6번 구매 요청에서 재사용.
+### 같은 bookId로 다시 호출하면 새 행을 만들지 않고 기존 항목의 수량에 합쳐진다(merge).
+POST {{host}}/api/carts
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "bookId": 1,
+  "quantity": 88
+}
+
+> {%
+    client.global.set("cartId", response.body.data.id);
+%}
+
+### 5. 구매 - cartItemIds는 5번에서 저장한 cartId를 그대로 사용. 성공하면 OrderCompletedEvent 발행 → 이메일 발송 → email_notification_history에 기록됨
+POST {{host}}/api/purchases
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "cartItemIds": [{{cartId}}],
+  "senderName": "홍길동",
+  "senderPhone": "010-1234-5678",
+  "receiverName": "김철수",
+  "receiverPhone": "010-9876-5432",
+  "zipcode": "06236",
+  "address": "서울특별시 강남구 테헤란로 152",
+  "paymentMethod": "CREDIT_CARD"
+}

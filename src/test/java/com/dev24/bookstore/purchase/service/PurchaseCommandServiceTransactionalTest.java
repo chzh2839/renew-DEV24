@@ -32,7 +32,9 @@ import com.dev24.bookstore.book.domain.BookStatus;
 import com.dev24.bookstore.book.repository.BookRepository;
 import com.dev24.bookstore.common.exception.BusinessException;
 import com.dev24.bookstore.common.exception.ErrorCode;
+import com.dev24.bookstore.purchase.controller.request.CartAddRequest;
 import com.dev24.bookstore.purchase.controller.request.PurchaseRequest;
+import com.dev24.bookstore.purchase.controller.response.CartResponse;
 import com.dev24.bookstore.purchase.controller.response.PurchaseResponse;
 import com.dev24.bookstore.purchase.domain.Cart;
 import com.dev24.bookstore.purchase.domain.Stock;
@@ -53,6 +55,8 @@ class PurchaseCommandServiceTransactionalTest {
 
     @Autowired
     private PurchaseCommandService purchaseCommandService;
+    @Autowired
+    private CartCommandService cartCommandService;
     @Autowired
     private CustomerRepository customerRepository;
     @Autowired
@@ -202,5 +206,94 @@ class PurchaseCommandServiceTransactionalTest {
 
         // 마지막 안전장치: 어떤 경로로 실패했든 최종 재고가 음수로 내려가진 않았는지(진짜 오버셀 여부) 직접 확인
         assertThat(stockRepository.findByBookId(book.getId()).orElseThrow().getQuantity()).isEqualTo(0);
+    }
+
+    // 안전재고 임계치 부근에서 2명을 넘는 다수(5명)가 동시에 경쟁해도, 구매 가능 수량(quantity - safetyStock)을
+    // 초과하는 성공은 나오지 않고 재고가 안전재고 밑으로는 절대 안 내려가는지 검증한다.
+    //
+    // 주의: 낙관적 락은 재시도 로직이 없어, 진짜로 5개 트랜잭션이
+    // 동시에 같은 version을 읽으면 그중 커밋에 성공하는 건 매 순간 하나뿐이고 나머지는 재시도 없이 그대로 실패한다 -
+    // 그래서 "구매 가능 수량이 3이니 정확히 3명 성공"을 보장하진 않는다(스케줄링에 따라 1~3명 사이 어디든 나올 수 있음).
+    // 이 테스트가 실제로 보장해야 하는 건 "안전재고 밑으로는 절대 안 내려간다"와 "구매 가능 수량(3)을 초과하는
+    // 성공은 없다"는 두 가지 불변식이다.
+    @Test
+    void purchase_concurrentRequestsAroundSafetyStockThreshold_neverDropsBelowSafetyStock() throws Exception {
+        // Stock(quantity=5, safetyStock=2) -> 구매 가능 수량은 3개뿐인데 5명이 동시에 각 1개씩 구매를 시도.
+        int customerCount = 5;
+        Admin admin = admin("txn-safety-admin");
+        Book book = book("9100000000005");
+        stockRepository.save(new Stock(book, admin, 5, 12000, 2));
+
+        List<Long> cartItemIds = new ArrayList<>();
+        List<String> loginIds = new ArrayList<>();
+        for (int i = 0; i < customerCount; i++) {
+            String loginId = "txn-safety-" + i;
+            Customer customer = customer(loginId);
+            cartItemIds.add(cartRepository.save(new Cart(customer, book, 1, 12000)).getId());
+            loginIds.add(loginId);
+        }
+
+        ExecutorService executor = Executors.newFixedThreadPool(customerCount);
+        CountDownLatch readyLatch = new CountDownLatch(customerCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+
+        List<Future<PurchaseResponse>> futures = new ArrayList<>();
+        for (int i = 0; i < customerCount; i++) {
+            String loginId = loginIds.get(i);
+            Long cartItemId = cartItemIds.get(i);
+            futures.add(executor.submit(() -> {
+                readyLatch.countDown();
+                startLatch.await();
+                return purchaseCommandService.purchase(loginId, request(List.of(cartItemId)));
+            }));
+        }
+        readyLatch.await(5, TimeUnit.SECONDS);
+        startLatch.countDown();
+
+        List<PurchaseResponse> successes = new ArrayList<>();
+        List<Throwable> failures = new ArrayList<>();
+        for (Future<PurchaseResponse> future : futures) {
+            try {
+                successes.add(future.get(10, TimeUnit.SECONDS));
+            } catch (ExecutionException e) {
+                failures.add(e.getCause());
+            }
+        }
+        executor.shutdown();
+
+        // 구매 가능 수량(quantity - safetyStock = 3)을 초과하는 성공은 절대 나오면 안 되고, 최소 1명은 성공해야 한다
+        // (5개 트랜잭션이 전부 동시에 첫 판에서 충돌해도 그중 하나는 반드시 커밋에 성공한다).
+        assertThat(successes).hasSizeBetween(1, 3);
+        assertThat(successes.size() + failures.size()).isEqualTo(customerCount);
+        assertThat(failures).allMatch(t -> t instanceof ObjectOptimisticLockingFailureException
+                || (t instanceof BusinessException be && be.getErrorCode() == ErrorCode.INSUFFICIENT_STOCK));
+
+        // 안전재고(2) 밑으로는 절대 안 내려가야 한다 - 성공 건수만큼만 정확히 차감됐는지가 핵심.
+        Stock finalStock = stockRepository.findByBookId(book.getId()).orElseThrow();
+        assertThat(finalStock.getQuantity()).isEqualTo(5 - successes.size());
+        assertThat(finalStock.getQuantity()).isGreaterThanOrEqualTo(2);
+    }
+
+    // 같은 책을 두 번 담아 merge(수량/금액 합산)된 결과가 구매까지 정확히 이어지는지를 실제 Postgres로 검증한다.
+    @Test
+    void addToCartThenPurchase_viaRealCartApi_computesConsistentTotalPriceAndDecrementsStock() {
+        Customer customer = customer("txn-cart-then-purchase");
+        Admin admin = admin("txn-cart-then-purchase-admin");
+        Book book = book("9100000000006");
+        stockRepository.save(new Stock(book, admin, 10, 12000, 2));
+
+        cartCommandService.addToCart(customer.getLoginId(), new CartAddRequest(book.getId(), 1));
+        CartResponse cartResponse = cartCommandService.addToCart(
+                customer.getLoginId(), new CartAddRequest(book.getId(), 2));
+
+        assertThat(cartResponse.quantity()).isEqualTo(3);
+        assertThat(cartResponse.priceSnapshot()).isEqualTo(36000);
+
+        PurchaseResponse response = purchaseCommandService.purchase(
+                customer.getLoginId(), request(List.of(cartResponse.id())));
+
+        assertThat(response.totalPrice()).isEqualTo(36000);
+        assertThat(stockRepository.findByBookId(book.getId()).orElseThrow().getQuantity()).isEqualTo(7);
+        assertThat(cartRepository.findById(cartResponse.id())).isEmpty();
     }
 }

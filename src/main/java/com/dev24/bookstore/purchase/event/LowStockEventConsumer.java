@@ -75,7 +75,7 @@ public class LowStockEventConsumer {
         }
         for (Admin admin : stockAdmins) {
             emailNotificationSender.send(admin.getEmail(), "재고 부족 알림",
-                    "도서 #" + event.bookId() + "의 재고가 부족합니다. 남은 수량=" + event.remainingQuantity()
+                    "도서 번호 " + event.bookId() + "의 재고가 부족합니다. 남은 수량=" + event.remainingQuantity()
                             + ", 안전재고=" + event.safetyStock());
         }
     }

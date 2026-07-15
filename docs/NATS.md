@@ -247,7 +247,9 @@ if (quantityBeforeDecrease > stock.getSafetyStock() && stock.getQuantity() <= st
 즉 이 전이는 한 `Stock`당 사실상 한 번만 일어난다(관리자가 재입고해서 다시 안전재고 위로 올라간 뒤 또 내려가는 경우는 예외).
 
 **컨슈머 쪽 차이**:<br>
-`LowStockEventConsumer.process()`는 `CustomerRepository` 대신 `AdminRepository`로 알림 대상을 조회한다 — 다만 재고를 등록한 특정 관리자 1명이 아니라 **역할이 재고 관리자(`AdminRole.STOCK_ADMIN`)인 관리자 전원**에게 보낸다(`LowStockEvent`엔 이제 특정 관리자 id가 없다). 적립금처럼 DB에 반영할 상태 변화가 없어 이메일 발송만 하고 끝난다(그래서 통합 테스트는 따로 만들지 않고, 이미 `OrderCompletedEventIntegrationTest`가 검증한 발행-구독 배관을 그대로 신뢰하고 단위 테스트만 둔다).
+`LowStockEventConsumer.process()`는 `CustomerRepository` 대신 `AdminRepository`로 알림 대상을 조회한다 — 다만 재고를 등록한 특정 관리자 1명이 아니라 **역할이 재고 관리자(`AdminRole.STOCK_ADMIN`)인 관리자 전원**에게 보낸다(`LowStockEvent`엔 이제 특정 관리자 id가 없다).<br>
+`email_notification_history`로 "실제로 메일이 갔는지"를 코드로 검증한다.<br>
+`LowStockEventIntegrationTest`, `OrderCompletedEventIntegrationTest` — 동일한 Postgres+NATS Testcontainers 골격에 Mailpit 컨테이너를 더해, 구매로 안전재고 임계치를 넘기면 실제 NATS 발행 → 컨슈머 소비 → 실제 SMTP 발송까지 이어져 `email_notification_history`에 `SUCCESS`가 기록되고 Mailpit에도 실제로 도착하는지(REST API로 재확인) 끝까지 검증한다.
 
 ## 실제 알림 채널 연동 — 이메일(`EmailNotificationSender`)
 
@@ -349,6 +351,13 @@ APP_NATS_URL: nats://nats:4222
 docker run -p 4222:4222 nats:2.10-alpine -js
 ./gradlew bootRun --args='--app.nats.enabled=true'
 ```
+
+### IDE에서 직접 실행하는 경우 (docker-compose는 인프라만 띄운 상태)
+
+`docker compose up -d`로 postgres/redis/nats/mailpit **인프라 컨테이너만** 띄우고 앱 자체는 IDE의 Run/Debug Configuration으로 실행하는 경우,<br>
+`docker-compose.yml`의 `APP_NATS_ENABLED=true`는 `app` 컨테이너에만 주입되는 환경변수라 적용되지 않는다 — `application.properties`의 기본값 `app.nats.enabled=false`가 그대로 쓰여서 `NatsConfig`/`OrderCompletedEventPublisher`/컨슈머 빈들이 아예 생성되지 않는다. 구매 자체(재고 차감, 주문 생성)는 NATS와 무관하게 정상 커밋되므로 겉으로는 성공한 것처럼 보이지만, `applicationEventPublisher.publishEvent(OrderCompletedEvent)`를 받아줄 리스너가 없어 NATS 발행 → 컨슈머 소비 → 이메일 발송(`EmailNotificationSender`) → `email_notification_history` 저장까지 이어지는 흐름 전체가 조용히 아무 일도 안 일어난다.
+
+이 경우 `application-local.properties`(`app.nats.enabled=true`, `app.nats.url=nats://localhost:4222` — 인프라 컨테이너들이 `localhost`에 포트 매핑되어 있으므로 기존 기본값과 동일한 URL)를 Run/Debug Configuration의 **Active profiles**에 `local`을 추가해 적용하거나, Program arguments에 `--app.nats.enabled=true`를 직접 넘기면 된다.
 
 ## 테스트
 

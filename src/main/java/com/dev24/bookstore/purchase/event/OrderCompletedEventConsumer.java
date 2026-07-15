@@ -74,7 +74,7 @@ public class OrderCompletedEventConsumer {
         customerRepository.save(customer);
 
         emailNotificationSender.send(customer.getEmail(), "주문이 완료되었습니다",
-                "주문 #" + event.purchaseId() + "이 완료되어 " + (event.totalPrice() * POINT_RATE_PERCENT / 100)
+                "주문번호 " + event.purchaseId() + "이 완료되어 " + (event.totalPrice() * POINT_RATE_PERCENT / 100)
                         + "포인트가 적립되었습니다.");
     }
 
