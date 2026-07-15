@@ -17,10 +17,13 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.dev24.bookstore.common.response.ApiResponse;
+import com.dev24.bookstore.review.controller.request.PresignedUploadRequest;
 import com.dev24.bookstore.review.controller.request.ReviewCreateRequest;
 import com.dev24.bookstore.review.controller.request.ReviewUpdateRequest;
+import com.dev24.bookstore.review.controller.response.PresignedUploadResponse;
 import com.dev24.bookstore.review.controller.response.ReviewResponse;
 import com.dev24.bookstore.review.service.ReviewCommandService;
+import com.dev24.bookstore.review.service.ReviewImageService;
 import com.dev24.bookstore.review.service.ReviewQueryService;
 
 import jakarta.validation.Valid;
@@ -34,6 +37,7 @@ public class ReviewController {
 
     private final ReviewCommandService reviewCommandService;
     private final ReviewQueryService reviewQueryService;
+    private final ReviewImageService reviewImageService;
 
     // 도서 상세 페이지에 노출되는 공개 목록이라 로그인 불필요(SecurityConfig의 PERMIT_ALL_PATHS 참고)
     @GetMapping
@@ -66,5 +70,13 @@ public class ReviewController {
         String loginId = SecurityContextHolder.getContext().getAuthentication().getName();
         reviewCommandService.deleteReview(loginId, id);
         return ApiResponse.success();
+    }
+
+    // 소유자 검증 대상이 없어(업로드 자체는 아직 어떤 리소스에도 안 붙어있음) loginId를 서비스에 넘길 필요는 없다 -
+    // 로그인 여부만 확인해 익명 업로드로 스토리지가 남용되는 것만 막는다.
+    @PostMapping("/presigned-url")
+    @PreAuthorize("hasRole('CUSTOMER')")
+    public ApiResponse<PresignedUploadResponse> issuePresignedUploadUrl(@Valid @RequestBody PresignedUploadRequest request) {
+        return ApiResponse.success(reviewImageService.issuePresignedUploadUrl(request.fileName()));
     }
 }

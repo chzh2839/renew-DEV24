@@ -79,4 +79,11 @@ public class Review {
         this.type = type;
         this.imageUrl = imageUrl;
     }
+
+    // 업로드된 파일이 실제 이미지가 아닌 것으로 검증되면(ReviewImageValidationListener) 이미지 참조만
+    // 제거한다 - 리뷰 본문 텍스트/평점은 사용자가 쓴 그대로 유지한다.
+    public void clearImage() {
+        this.imageUrl = null;
+        this.type = ReviewType.TEXT;
+    }
 }

@@ -9,4 +9,6 @@ import com.dev24.bookstore.review.domain.Review;
 public interface ReviewRepository extends JpaRepository<Review, Long> {
 
     Page<Review> findAllByBookId(Long bookId, Pageable pageable);
+
+    boolean existsByImageUrl(String imageUrl);
 }

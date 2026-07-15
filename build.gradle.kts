@@ -32,6 +32,8 @@ dependencies {
 	implementation("org.flywaydb:flyway-database-postgresql")
 	implementation("io.nats:jnats:2.25.3")
 	implementation("com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer:20260313.1")
+	implementation(platform("software.amazon.awssdk:bom:2.47.6"))
+	implementation("software.amazon.awssdk:s3")
 	implementation("io.jsonwebtoken:jjwt-api:0.12.6")
 	runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
 	runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")

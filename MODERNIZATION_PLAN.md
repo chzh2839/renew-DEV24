@@ -19,16 +19,33 @@
 2. **영속성**: MyBatis → JPA + QueryDSL
 3. **API**: REST API 서버로 전환, 화면(JSP)은 최소 유지 — 백엔드 중심
 4. **범위**: 전체 재작성이 아니라 핵심 대표 모듈 4개를 선별해 깊게 개선, 나머지는 레거시로 보존하고 범위 밖으로 명시
-5. **추가 인프라**: Redis(캐싱 + 세션/리프레시 토큰), NATS JetStream(이벤트 발행), Nginx(리버스 프록시 + 로드밸런싱), MinIO(S3 호환 오브젝트 스토리지) 도입
+5. **추가 인프라**: Redis(캐싱 + 세션/리프레시 토큰), NATS JetStream(이벤트 발행), Nginx(리버스 프록시 + 로드밸런싱), SeaweedFS(S3 호환 오브젝트 스토리지) 도입
 
 기존 `DEV24Test`는 손대지 않고 `legacy/` 하위(또는 별도 브랜치)로 보존해 README의 Before 근거로 사용한다. 신규 코드는 완전히 새 Spring Boot 프로젝트로 시작해 아래 4개 모듈만 끝까지 깊게 구현한다.
 
 인프라 요소는 막연히 추가하지 않고, 각각 특정 Phase의 구체적 문제와 연결해 "왜 썼는지" 설명 가능하게 도입한다.
 
 - **Redis**: (a) 인증 모듈 — JWT 리프레시 토큰 저장 및 로그아웃 시 액세스 토큰 블랙리스트 처리. (b) 도서 카탈로그 — `@Cacheable` 기반 목록/상세 조회 캐싱, 캐시 히트·미스 응답시간 비교를 성능 개선 근거자료로 추가.
+
+
 - **NATS JetStream**: 구매 모듈 — 재고 차감은 정합성이 중요하므로 `@Transactional`+`@Version` 낙관적 락으로 동기 처리하고, 트랜잭션 커밋 후 부가 로직(적립금 지급/알림)만 `OrderCompletedEvent`로 발행해 별도 리스너가 비동기 소비하도록 분리한다. 재고가 안전재고 이하로 떨어지면 `LowStockEvent`도 같은 방식으로 발행 — 강한 정합성이 필요한 부분과 최종적 일관성으로 충분한 부분을 구분해 설계했다는 스토리, 그리고 동일 이벤트 패턴이 두 시나리오(주문 완료/재고 부족)에 재사용됨을 보여준다.
+ 
+
 - **Nginx**: 인프라 — app 컨테이너를 2개 이상 띄우고 Nginx를 리버스 프록시 겸 라운드로빈 로드밸런서로 앞단에 배치.
-- **MinIO**: 리뷰 모듈 — 포토 리뷰 이미지 저장. 레거시는 로컬 디스크(`C:\uploadStorage`)에 저장했는데, 이 프로젝트는 app 컨테이너가 2 replica로 뜨는 구조라 컨테이너별 로컬 디스크가 서로 분리돼 있어 그대로 재현하면 안 된다(인스턴스마다 파일이 따로 쌓여 다른 인스턴스가 응답하면 404). 그렇다고 진짜 AWS S3를 쓰면 `docker-compose up` 하나로 완결되던 로컬 개발 환경이 AWS 자격증명에 의존하게 되므로, S3 호환 API를 제공하는 MinIO를 로컬 컨테이너로 띄운다 — 코드는 실제 AWS SDK/presigned URL 업로드 패턴을 그대로 쓰면서, 실 배포 시엔 엔드포인트만 S3로 바꿔 끼우면 되는 구조.
+
+
+- **SeaweedFS**: 리뷰 모듈 — 포토 리뷰 이미지 저장.
+  - 레거시는 로컬 디스크(`C:\uploadStorage`)에 저장했는데, 이 프로젝트는 app 컨테이너가 2 replica로 뜨는 구조라 컨테이너별 로컬 디스크가 서로 분리돼 있어 그대로 재현하면 안 된다(인스턴스마다 파일이 따로 쌓여 다른 인스턴스가 응답하면 404).<br>
+  - S3 호환 API를 제공하는 오브젝트 스토리지를 로컬 컨테이너로 띄운다 — 코드는 실제 AWS SDK/presigned URL 업로드 패턴을 그대로 쓰면서, 실 배포 시엔 엔드포인트만 S3로 바꿔 끼우면 되는 구조.
+  - 원래 이 용도로 가장 먼저 검토한 건 MinIO였는데, 실제로 붙이려고 보니 **공식 `minio/minio` 저장소가 2026-04-25에 아카이브됐다**(마지막 릴리즈 2025-10-15, "This repository was archived by the owner... It is now read-only") — 더 이상 보안 패치가 안 나오는 이미지를 새로 도입하는 건 문제라 대안을 비교 검토했다.
+  - **후보와 제외 이유**:<br>
+    - Garage(Rust, GDPR 중심 분산 설계)는 노드 1개짜리 로컬 개발용으로도 `garage layout` CLI로 zone/capacity를 할당하는 클러스터 부트스트랩 절차가 필요해 `docker-compose up` 한 번으로 끝나야 하는 이 프로젝트 철학과 안 맞았다.
+    - RustFS는 MinIO 대체를 표방하는 신생 프로젝트라 운영 이력이 짧아 리스크가 컸다. 
+    - LocalStack은 AWS 서비스를 흉내내는 테스트용 목(mock) 도구 성격이 강해 "앱이 실제로 의존하는 영속 스토리지"로 쓰기엔 안 맞았다. 
+    - Ceph/RGW는 S3 호환은 확실하지만 멀티 데몬 클러스터 구조라 "컨테이너별 `mem_limit`로 가볍게 유지"라는 이 프로젝트 원칙과 정면으로 부딪혔다.
+  - **SeaweedFS를 최종 선택한 이유**:
+    - 활발히 유지보수 중(Docker Hub `chrislusf/seaweedfs`, 최근 태그 `4.39`)이고, `weed server -s3` 단일 프로세스로 master/volume/filer/S3 게이트웨이가 한 번에 뜨는 구조라 부트스트랩 절차 없이 MinIO만큼 단순하게 docker-compose에 추가된다. 12년 이상 된 성숙한 프로젝트고, MinIO 은퇴 이후 Kubeflow Pipelines가 기본 오브젝트 스토리지로 채택할 만큼 실전 검증된 대안이라는 구체적 근거도 있다.
+    - 정리하면 "① 계속 유지보수됨 ② 수동 부트스트랩 없이 컨테이너 하나로 끝남 ③ presigned URL(SigV4)까지 포함한 진짜 S3 API 호환 ④ 가벼움 ⑤ 실전 채택 사례로 근거를 댈 수 있음" 다섯 기준을 SeaweedFS만 전부 만족했다.
 
 ## 3. 선정한 4개 핵심 모듈
 
@@ -62,8 +79,8 @@
 - **Redis 7** — 리프레시 토큰/로그아웃 블랙리스트(인증 모듈) + Spring Cache 캐싱(도서 카탈로그 모듈)
 - **NATS JetStream** — 단일 바이너리로 가볍게 동작(Zookeeper/별도 컨트롤러 클러스터 불필요), 구매 완료 후 적립금/알림, 안전재고 이하 시 재입고 알림 등을 비동기 이벤트로 분리(구매 모듈), 테스트는 Testcontainers(NATS 이미지 기반 GenericContainer) 사용
 - **Nginx** — 리버스 프록시 + app 2 replica 앞단 라운드로빈 로드밸런싱 데모
-- **MinIO** — S3 호환 오브젝트 스토리지, 리뷰 모듈의 포토 리뷰 이미지 저장. 클라이언트가 presigned URL로 MinIO에 직접 업로드(서버는 URL 발급만) — 이미지 바이트가 스프링 서버를 거치지 않아 app 인스턴스 부하가 늘지 않고, 실 배포 시엔 엔드포인트를 AWS S3로 바꿔 끼우기만 하면 되는 구조
-- **Dockerfile(멀티스테이지) + docker-compose.yml**(app×2 + postgres + redis + nats + nginx + minio) — `docker-compose up` 한 번으로 전체 인프라 로컬 실행
+- **SeaweedFS**(S3 호환) — 리뷰 모듈의 포토 리뷰 이미지 저장. 클라이언트가 presigned URL로 직접 업로드(서버는 URL 발급만) — 이미지 바이트가 스프링 서버를 거치지 않아 app 인스턴스 부하가 늘지 않고, 실 배포 시엔 엔드포인트를 AWS S3로 바꿔 끼우기만 하면 되는 구조
+- **Dockerfile(멀티스테이지) + docker-compose.yml**(app×2 + postgres + redis + nats + nginx + seaweedfs) — `docker-compose up` 한 번으로 전체 인프라 로컬 실행
 - **컨테이너 메모리 제한** — `docker-compose.yml`에서 서비스별 `mem_limit`(또는 `deploy.resources.limits.memory`)로 최대 사용 메모리 상한 지정(예: DB(PostgreSQL) 512MB, Redis 256MB, NATS 128MB 등)
 
 ## 5. Phase 로드맵
@@ -123,7 +140,7 @@
 - 소유자 검증
 - `Page<ReviewResponse>` 표준 페이징
 - `@WebMvcTest`
-- **MinIO** 연동 — docker-compose에 MinIO 컨테이너 추가, 포토 리뷰용 presigned URL 발급 API(업로드는 클라이언트가 MinIO에 직접), 발급된 오브젝트 키를 `Review.imageUrl`로 저장
+- **오브젝트 스토리지 연동**(SeaweedFS) — docker-compose에 SeaweedFS 컨테이너 추가, 포토 리뷰용 presigned URL 발급 API(업로드는 클라이언트가 SeaweedFS에 직접), 발급된 오브젝트 키를 `Review.imageUrl`로 저장
 
 ### Phase 6. 최소 데모 화면
 - Swagger UI + Postman/Insomnia 컬렉션을 기본 데모 경로로
@@ -156,6 +173,6 @@
 - Nginx를 통해 반복 요청 시 두 app 인스턴스에 라운드로빈으로 분산되는지 로그로 확인
 - 구매 완료 시 NATS JetStream에 `OrderCompletedEvent`가 발행되고 컨슈머가 정상 소비(적립금/알림 반영)하는지 확인
 - 재고가 안전재고 임계치 이하로 떨어지는 시나리오에서 `LowStockEvent`가 발행되고, 안전재고 초과 주문은 거부되는지 확인
-- 포토 리뷰 업로드 시 발급받은 presigned URL로 MinIO에 실제 저장되는지, 저장된 오브젝트 키로 이미지가 정상 조회되는지 확인
+- 포토 리뷰 업로드 시 발급받은 presigned URL로 SeaweedFS에 실제 저장되는지, 저장된 오브젝트 키로 이미지가 정상 조회되는지 확인
 - 컨테이너별 메모리 제한 설정 후 `docker stats`로 각 컨테이너가 지정한 상한 내에서 동작하는지 확인
 - GitHub Actions가 push 시 빌드+테스트를 정상 통과하는지 Actions 탭에서 확인

@@ -13,8 +13,10 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.dev24.bookstore.auth.domain.Customer;
@@ -33,6 +35,7 @@ import com.dev24.bookstore.review.controller.request.ReviewUpdateRequest;
 import com.dev24.bookstore.review.controller.response.ReviewResponse;
 import com.dev24.bookstore.review.domain.Review;
 import com.dev24.bookstore.review.domain.ReviewType;
+import com.dev24.bookstore.review.event.ReviewImageUploadedEvent;
 import com.dev24.bookstore.review.repository.ReviewRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -46,13 +49,15 @@ class ReviewCommandServiceTest {
     private ReviewRepository reviewRepository;
     @Mock
     private HtmlSanitizer htmlSanitizer;
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
 
     private ReviewCommandService reviewCommandService;
 
     @BeforeEach
     void setUp() {
         reviewCommandService = new ReviewCommandService(
-                customerRepository, purchaseItemRepository, reviewRepository, htmlSanitizer);
+                customerRepository, purchaseItemRepository, reviewRepository, htmlSanitizer, applicationEventPublisher);
     }
 
     private Customer customer(long id, String loginId) {
@@ -197,5 +202,67 @@ class ReviewCommandServiceTest {
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.ENTITY_NOT_FOUND);
         verify(reviewRepository, never()).delete(any());
+    }
+
+    // 포토 리뷰(imageUrl 있음)를 작성하면 업로드 콘텐츠 검증을 위한 ReviewImageUploadedEvent가 발행되는지 검증
+    @Test
+    void createReview_withImageUrl_publishesReviewImageUploadedEvent() {
+        Customer customer = customer(14L, "customer1");
+        Book book = book(14L);
+        PurchaseItem purchaseItem = purchaseItem(14L, customer, book);
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(purchaseItemRepository.findById(14L)).willReturn(Optional.of(purchaseItem));
+        given(htmlSanitizer.sanitize("사진 첨부")).willReturn("사진 첨부");
+        given(reviewRepository.save(any())).willAnswer(invocation -> {
+            Review saved = invocation.getArgument(0);
+            ReflectionTestUtils.setField(saved, "id", 20L);
+            return saved;
+        });
+
+        reviewCommandService.createReview("customer1",
+                new ReviewCreateRequest(14L, 5, "사진 첨부", ReviewType.IMAGE, "reviews/photo.jpg"));
+
+        ArgumentCaptor<ReviewImageUploadedEvent> captor = ArgumentCaptor.forClass(ReviewImageUploadedEvent.class);
+        verify(applicationEventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().reviewId()).isEqualTo(20L);
+        assertThat(captor.getValue().objectKey()).isEqualTo("reviews/photo.jpg");
+    }
+
+    // 텍스트 리뷰(imageUrl 없음)는 검증할 파일이 없으니 ReviewImageUploadedEvent가 발행되지 않는지 검증
+    @Test
+    void createReview_withoutImageUrl_doesNotPublishReviewImageUploadedEvent() {
+        Customer customer = customer(15L, "customer1");
+        Book book = book(15L);
+        PurchaseItem purchaseItem = purchaseItem(15L, customer, book);
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(purchaseItemRepository.findById(15L)).willReturn(Optional.of(purchaseItem));
+        given(htmlSanitizer.sanitize("텍스트만")).willReturn("텍스트만");
+        given(reviewRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
+
+        reviewCommandService.createReview("customer1",
+                new ReviewCreateRequest(15L, 5, "텍스트만", ReviewType.TEXT, null));
+
+        verify(applicationEventPublisher, never()).publishEvent(any());
+    }
+
+    // 리뷰 수정으로 imageUrl이 새로 생기면(사진 추가) ReviewImageUploadedEvent가 발행되는지 검증
+    @Test
+    void updateReview_addsImageUrl_publishesReviewImageUploadedEvent() {
+        Customer customer = customer(16L, "customer1");
+        Book book = book(16L);
+        PurchaseItem purchaseItem = purchaseItem(16L, customer, book);
+        Review review = new Review(customer, book, purchaseItem, 3, "내용", ReviewType.TEXT, null);
+        ReflectionTestUtils.setField(review, "id", 21L);
+        given(customerRepository.findByLoginId("customer1")).willReturn(Optional.of(customer));
+        given(reviewRepository.findById(21L)).willReturn(Optional.of(review));
+        given(htmlSanitizer.sanitize("사진 추가")).willReturn("사진 추가");
+
+        reviewCommandService.updateReview("customer1", 21L,
+                new ReviewUpdateRequest(4, "사진 추가", ReviewType.IMAGE, "reviews/new-photo.png"));
+
+        ArgumentCaptor<ReviewImageUploadedEvent> captor = ArgumentCaptor.forClass(ReviewImageUploadedEvent.class);
+        verify(applicationEventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().reviewId()).isEqualTo(21L);
+        assertThat(captor.getValue().objectKey()).isEqualTo("reviews/new-photo.png");
     }
 }

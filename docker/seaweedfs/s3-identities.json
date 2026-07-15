@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "bookstore",
+      "credentials": [
+        {"accessKey": "bookstore-local-dev-access-key", "secretKey": "bookstore-local-dev-secret-key-not-for-prod"}
+      ],
+      "actions": ["Admin"]
+    }
+  ]
+}

@@ -294,7 +294,7 @@ docker compose build
 # 2-1. 전체 스택 기동 (백그라운드)
 docker compose up -d
 # 2-2. 인프라만 - 일상적인 로컬 개발/디버깅용
-docker compose up -d postgres redis nats mailpit
+docker compose up -d postgres redis nats mailpit seaweedfs
 
  ✔ Network dev24_bookstore-net Created  # 컨테이너들이 서로 통신할 수 있도록 전용 가상 네트워크를 새로 만든 것                                                                                                                                                                                                                                                                       0.1s
  ✔ Container dev24-nats-1      Healthy # NATS(메시징/이벤트 브로커로 추정) 컨테이너가 생성되어 실행됐고, healthcheck를 통과                                                                                                                                                                                                                                                                         6.4s

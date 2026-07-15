@@ -31,11 +31,14 @@ import com.dev24.bookstore.auth.security.JwtAuthenticationFilter;
 import com.dev24.bookstore.common.config.SecurityConfig;
 import com.dev24.bookstore.common.exception.BusinessException;
 import com.dev24.bookstore.common.exception.ErrorCode;
+import com.dev24.bookstore.review.controller.request.PresignedUploadRequest;
 import com.dev24.bookstore.review.controller.request.ReviewCreateRequest;
 import com.dev24.bookstore.review.controller.request.ReviewUpdateRequest;
+import com.dev24.bookstore.review.controller.response.PresignedUploadResponse;
 import com.dev24.bookstore.review.controller.response.ReviewResponse;
 import com.dev24.bookstore.review.domain.ReviewType;
 import com.dev24.bookstore.review.service.ReviewCommandService;
+import com.dev24.bookstore.review.service.ReviewImageService;
 import com.dev24.bookstore.review.service.ReviewQueryService;
 
 // @WebMvcTest는 JwtAuthenticationFilter도 스캔하므로 addFilters=false에서도 빈 생성을 위해 목 처리가 필요하고,
@@ -52,6 +55,8 @@ class ReviewControllerTest {
     private ReviewCommandService reviewCommandService;
     @MockitoBean
     private ReviewQueryService reviewQueryService;
+    @MockitoBean
+    private ReviewImageService reviewImageService;
     @MockitoBean
     private JwtAuthenticationFilter jwtAuthenticationFilter;
 
@@ -224,5 +229,51 @@ class ReviewControllerTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("A004"));
+    }
+
+    // 고객으로 인증된 요청이면 presigned URL 발급이 성공하는지 검증
+    @Test
+    @WithMockUser(username = "customer1", roles = "CUSTOMER")
+    void issuePresignedUploadUrl_asCustomer_returnsPresignedUploadResponse() throws Exception {
+        given(reviewImageService.issuePresignedUploadUrl("photo.jpg"))
+                .willReturn(new PresignedUploadResponse("http://localhost:9000/review-images/reviews/abc.jpg",
+                        "reviews/abc.jpg"));
+
+        mockMvc.perform(post("/api/reviews/presigned-url")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"fileName":"photo.jpg"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.objectKey").value("reviews/abc.jpg"));
+    }
+
+    // 비로그인 요청은 presigned URL 발급도 403 + A004로 거부되는지 검증
+    @Test
+    @WithAnonymousUser
+    void issuePresignedUploadUrl_unauthenticated_returnsForbidden() throws Exception {
+        mockMvc.perform(post("/api/reviews/presigned-url")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"fileName":"photo.jpg"}
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("A004"));
+    }
+
+    // 이미지 확장자가 아니면(예: .exe) @Valid 검증에서 걸려 서비스까지 가지 않고 400 + C001로 응답하는지 검증
+    @Test
+    @WithMockUser(username = "customer1", roles = "CUSTOMER")
+    void issuePresignedUploadUrl_invalidExtension_returnsInvalidInputError() throws Exception {
+        mockMvc.perform(post("/api/reviews/presigned-url")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"fileName":"malware.exe"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("C001"));
     }
 }
