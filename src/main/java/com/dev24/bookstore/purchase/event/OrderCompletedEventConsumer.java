@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 
 import com.dev24.bookstore.auth.domain.Customer;
 import com.dev24.bookstore.auth.repository.CustomerRepository;
+import com.dev24.bookstore.common.notification.EmailNotificationSender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.nats.client.Connection;
@@ -38,6 +39,7 @@ public class OrderCompletedEventConsumer {
     private final Connection natsConnection;
     private final JetStream jetStream;
     private final CustomerRepository customerRepository;
+    private final EmailNotificationSender emailNotificationSender;
     private final ObjectMapper objectMapper;
 
     private Dispatcher dispatcher;
@@ -71,8 +73,9 @@ public class OrderCompletedEventConsumer {
         customer.addPoint(event.totalPrice() * POINT_RATE_PERCENT / 100);
         customerRepository.save(customer);
 
-        // 실제 알림 채널(이메일/SMS/푸시) 연동은 범위 밖이라 로그로 시뮬레이션한다.
-        log.info("[알림] 고객 {}에게 주문 #{} 완료 알림 발송(시뮬레이션)", event.customerId(), event.purchaseId());
+        emailNotificationSender.send(customer.getEmail(), "주문이 완료되었습니다",
+                "주문 #" + event.purchaseId() + "이 완료되어 " + (event.totalPrice() * POINT_RATE_PERCENT / 100)
+                        + "포인트가 적립되었습니다.");
     }
 
     @PreDestroy

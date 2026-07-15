@@ -73,8 +73,8 @@ public class PurchaseCommandService {
             // 안전재고 이하로 "떨어지는 순간"에만 발행 - 이미 안전재고 이하인 상태에서 추가 구매가 계속 들어와도
             // 재발행하지 않아 관리자에게 같은 알림이 반복되는 걸 막는다.
             if (quantityBeforeDecrease > stock.getSafetyStock() && stock.getQuantity() <= stock.getSafetyStock()) {
-                applicationEventPublisher.publishEvent(new LowStockEvent(stock.getBook().getId(),
-                        stock.getAdmin().getId(), stock.getQuantity(), stock.getSafetyStock(), LocalDateTime.now()));
+                applicationEventPublisher.publishEvent(new LowStockEvent(
+                        stock.getBook().getId(), stock.getQuantity(), stock.getSafetyStock(), LocalDateTime.now()));
             }
         }
 

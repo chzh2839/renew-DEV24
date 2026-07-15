@@ -112,6 +112,7 @@
 - `Stock`에 **안전재고(`safetyStock`)** 필드를 추가해 구매 가능 수량을 `현재 재고 - 안전재고`로 검증
 - 구매 완료 후 적립금/알림은 `OrderCompletedEvent`를 **NATS JetStream**으로 발행하고 별도 컨슈머가 비동기 소비
 - 안전재고 이하 도달 시 `LowStockEvent`도 동일하게 **NATS JetStream**으로 발행
+- mailpit으로 알림 메일 전송 및 전송 이력 저장 (`email_notification_history`엔티티 추가)
 - 동시성 시나리오 + 안전재고 시나리오 + Testcontainers(NATS) 통합 테스트
 
 ### Phase 5. 리뷰 모듈

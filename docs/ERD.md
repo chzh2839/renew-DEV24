@@ -26,10 +26,14 @@ erDiagram
         varchar login_id UK "레거시 adm_id"
         varchar password_hash "레거시 adm_passwd 평문 → BCrypt 해시"
         varchar name "레거시 adm_name"
+        varchar email "신규 필드 — 재고부족 알림 등 이메일 발송 대상"
+        varchar admin_role "신규 필드 — GENERAL/STOCK_ADMIN, 알림 대상 그룹 분류(Role과 무관)"
     }
 ```
 
 Customer/Admin은 별도 테이블로 유지(레거시와 동일한 구분)하되, `Role`(CUSTOMER/ADMIN)을 Spring Security 인가에 사용. 리프레시 토큰/로그아웃 블랙리스트는 DB가 아닌 Redis에 저장(Phase 2).
+
+`Admin.admin_role`(`AdminRole` enum)은 `Role`과 이름은 비슷하지만 완전히 다른 개념이다 — `Role`은 인가(`@PreAuthorize`), `AdminRole`은 알림 대상 그룹 분류(재고 관리자 여부)일 뿐이다. 자세한 이유는 `docs/NATS.md` 참고.
 
 ## 2. 도서 카탈로그 모듈
 
@@ -162,3 +166,26 @@ erDiagram
 ```
 
 레거시는 `ReviewVO`에 `ra_num`/`ra_count`(평점 집계)를 함께 들고 있었으나, 신규 설계에서는 집계를 `RATING` 테이블(도서 카탈로그 모듈)로 일원화해 중복을 제거한다.
+
+## 5. 알림 모듈
+
+레거시 근거: 없음(신규 기능 — 레거시엔 이메일 발송/이력 개념 자체가 없음).
+
+```mermaid
+erDiagram
+    EMAIL_NOTIFICATION_HISTORY {
+        bigint id PK
+        varchar to_email "발송 시점 수신자 이메일(FK 아님, 비정규화 — 아래 설계 포인트 참고)"
+        varchar subject "메일 제목"
+        text body "메일 본문"
+        varchar status "SUCCESS/FAILED"
+        text error_message "실패 시 예외 메시지, 성공 시 NULL"
+        timestamp sent_at "발송 시도 시각"
+    }
+```
+
+**신규 설계 포인트**
+- `EMAIL_NOTIFICATION_HISTORY`는 특정 모듈 소속이 아니라 `EmailNotificationSender`(`common/notification`)를 거치는 모든 발송을 기록하는 공용 이력이다.<br>
+`OrderCompletedEvent`(구매완료 → `Customer`) / `LowStockEvent`(재고부족 → `Admin`) 둘 다 이 창구를 공유하므로, `CUSTOMER`/`ADMIN` 어느 한쪽으로도 FK를 걸 수 없다 — `to_email`에 발송 시점의 이메일 주소를 그대로 남겨 수신자가 이후 이메일을 바꿔도 이력이 왜곡되지 않게 한다.
+- `EmailNotificationSender`는 발송 실패를 호출부에 전파하지 않고 로그만 남기는 설계(NATS 재전달 시 적립금 중복 지급을 막기 위함, 3절 참고)라, `status`/`error_message`가 성공/실패를 확인할 수 있는 유일한 창구가 된다.
+- 수신자 이메일이 없어(`to`가 null/blank) 발송 자체를 시도하지 않은 경우는 이력을 남기지 않는다 — "발송 시도"가 없었기 때문이다.

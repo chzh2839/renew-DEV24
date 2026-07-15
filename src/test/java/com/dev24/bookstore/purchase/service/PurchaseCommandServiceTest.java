@@ -169,7 +169,6 @@ class PurchaseCommandServiceTest {
                 .satisfies(event -> {
                     LowStockEvent lowStockEvent = (LowStockEvent) event;
                     assertThat(lowStockEvent.bookId()).isEqualTo(7L);
-                    assertThat(lowStockEvent.adminId()).isEqualTo(1L);
                     assertThat(lowStockEvent.remainingQuantity()).isEqualTo(3);
                     assertThat(lowStockEvent.safetyStock()).isEqualTo(3);
                 });

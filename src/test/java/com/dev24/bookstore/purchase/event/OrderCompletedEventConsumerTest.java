@@ -2,7 +2,10 @@ package com.dev24.bookstore.purchase.event;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import java.time.LocalDateTime;
@@ -16,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.dev24.bookstore.auth.domain.Customer;
 import com.dev24.bookstore.auth.repository.CustomerRepository;
+import com.dev24.bookstore.common.notification.EmailNotificationSender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.nats.client.Connection;
@@ -31,13 +35,16 @@ class OrderCompletedEventConsumerTest {
     @Mock
     private CustomerRepository customerRepository;
     @Mock
+    private EmailNotificationSender emailNotificationSender;
+    @Mock
     private ObjectMapper objectMapper;
 
     private OrderCompletedEventConsumer consumer;
 
     @BeforeEach
     void setUp() {
-        consumer = new OrderCompletedEventConsumer(natsConnection, jetStream, customerRepository, objectMapper);
+        consumer = new OrderCompletedEventConsumer(
+                natsConnection, jetStream, customerRepository, emailNotificationSender, objectMapper);
     }
 
     private Customer customer(long id) {
@@ -47,9 +54,9 @@ class OrderCompletedEventConsumerTest {
         return customer;
     }
 
-    // 결제금액의 1%가 적립되고, 변경된 Customer가 저장되는지 검증
+    // 결제금액의 1%가 적립되고, 변경된 Customer가 저장되고, 고객 이메일로 알림이 발송되는지 검증
     @Test
-    void process_grantsOnePercentOfTotalPriceAsPoint() {
+    void process_grantsOnePercentOfTotalPriceAsPointAndEmailsCustomer() {
         Customer customer = customer(1L);
         given(customerRepository.findById(1L)).willReturn(Optional.of(customer));
         OrderCompletedEvent event = new OrderCompletedEvent(10L, 1L, 20000, LocalDateTime.now());
@@ -58,15 +65,18 @@ class OrderCompletedEventConsumerTest {
 
         assertThat(customer.getPoint()).isEqualTo(200);
         verify(customerRepository).save(customer);
+        verify(emailNotificationSender).send(anyString(), anyString(), anyString());
     }
 
-    // 존재하지 않는 고객이면 예외를 던져 handle()이 nak()으로 재전달을 유도할 수 있게 하는지 검증
+    // 존재하지 않는 고객이면 예외를 던지고, 이메일도 발송되지 않는지 검증
     @Test
-    void process_unknownCustomer_throws() {
+    void process_unknownCustomer_throwsAndDoesNotEmail() {
         given(customerRepository.findById(99L)).willReturn(Optional.empty());
         OrderCompletedEvent event = new OrderCompletedEvent(10L, 99L, 20000, LocalDateTime.now());
 
         assertThatThrownBy(() -> consumer.process(event))
                 .isInstanceOf(IllegalStateException.class);
+
+        verify(emailNotificationSender, never()).send(any(), any(), any());
     }
 }

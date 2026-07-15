@@ -39,12 +39,13 @@ OrderCompletedEventConsumer  (앱 기동 시 durable push consumer로 미리 구
 | `OrderCompletedEvent` | NATS로 오가는 페이로드(record) | `purchase/event/OrderCompletedEvent.java` |
 | `NatsConfig` | NATS 커넥션 빈 + JetStream 스트림("ORDERS") 준비 | `purchase/config/NatsConfig.java` |
 | `OrderCompletedEventPublisher` | 트랜잭션 커밋 후에만 실제 NATS 발행 | `purchase/event/OrderCompletedEventPublisher.java` |
-| `OrderCompletedEventConsumer` | 앱 기동 시 구독, 적립금 지급 + 알림(시뮬레이션) | `purchase/event/OrderCompletedEventConsumer.java` |
+| `OrderCompletedEventConsumer` | 앱 기동 시 구독, 적립금 지급 + 고객 이메일 알림 | `purchase/event/OrderCompletedEventConsumer.java` |
 | `PurchaseCommandService.purchase()` | 커밋 직전 `ApplicationEventPublisher`로 발행 트리거 | `purchase/service/PurchaseCommandService.java` |
 | `Customer.point` | 적립금 컬럼(`V7__add_point_to_customer.sql`) | `auth/domain/Customer.java` |
 | `LowStockEvent` | 안전재고 이하 도달 시 오가는 페이로드(record) | `purchase/event/LowStockEvent.java` |
 | `LowStockEventPublisher` | 트랜잭션 커밋 후에만 실제 NATS 발행(subject `orders.low-stock`) | `purchase/event/LowStockEventPublisher.java` |
-| `LowStockEventConsumer` | 앱 기동 시 구독, 관리자에게 재입고 알림(시뮬레이션) | `purchase/event/LowStockEventConsumer.java` |
+| `LowStockEventConsumer` | 앱 기동 시 구독, 재고 관리자(STOCK_ADMIN) 전원에게 이메일 알림 | `purchase/event/LowStockEventConsumer.java` |
+| `EmailNotificationSender` | 두 컨슈머가 공유하는 이메일 발송 창구(발송 실패는 로그만 남기고 삼킴) | `common/notification/EmailNotificationSender.java` |
 
 ## 왜 트랜잭션 커밋 "이후"에 발행해야 하는가
 
@@ -208,6 +209,8 @@ public class OrderCompletedEventConsumer {
     }
 }
 ```
+> 위 코드는 처음 이 패턴을 설명할 때 쓴 기본형이다. 실제 코드에서는 `log.info(...)` 알림 줄이 진짜 이메일 발송(`EmailNotificationSender`)으로 바뀌어 있다 — 자세한 내용은 아래 "실제 알림 채널 연동 — 이메일" 절 참고.
+
 설계 포인트:
 - **durable push consumer**:<br>
   - `PushSubscribeOptions.builder().durable(이름)`로 구독하면, 앱이 재기동돼도 NATS 서버가 "어디까지 소비했는지"를 기억해서 못 받은 메시지부터 이어서 준다.
@@ -233,8 +236,8 @@ stock.decreaseQuantity(cartItem.getQuantity());
 // 안전재고 이하로 "떨어지는 순간"에만 발행 - 이미 안전재고 이하인 상태에서 추가 구매가 계속 들어와도
 // 재발행하지 않아 관리자에게 같은 알림이 반복되는 걸 막는다.
 if (quantityBeforeDecrease > stock.getSafetyStock() && stock.getQuantity() <= stock.getSafetyStock()) {
-    applicationEventPublisher.publishEvent(new LowStockEvent(stock.getBook().getId(),
-            stock.getAdmin().getId(), stock.getQuantity(), stock.getSafetyStock(), LocalDateTime.now()));
+    applicationEventPublisher.publishEvent(new LowStockEvent(
+            stock.getBook().getId(), stock.getQuantity(), stock.getSafetyStock(), LocalDateTime.now()));
 }
 ```
 `beforeQuantity > safetyStock`(전에는 여유 있었음)이면서 `afterQuantity <= safetyStock`(지금은 임계치 이하)일 때만 참이 된다 — 이미 임계치 이하인 상태에서 또 구매가 들어와도(`beforeQuantity`가 이미 `safetyStock` 이하) 조건의 앞부분이 거짓이라 재발행되지 않는다.
@@ -244,7 +247,69 @@ if (quantityBeforeDecrease > stock.getSafetyStock() && stock.getQuantity() <= st
 즉 이 전이는 한 `Stock`당 사실상 한 번만 일어난다(관리자가 재입고해서 다시 안전재고 위로 올라간 뒤 또 내려가는 경우는 예외).
 
 **컨슈머 쪽 차이**:<br>
-`LowStockEventConsumer.process()`는 `CustomerRepository` 대신 `AdminRepository`로 `Stock.admin`(재고를 등록한 관리자)을 조회해 알림을 남긴다 — 적립금처럼 DB에 반영할 상태 변화가 없어 로그만 남기고 끝난다(그래서 통합 테스트는 따로 만들지 않고, 이미 `OrderCompletedEventIntegrationTest`가 검증한 발행-구독 배관을 그대로 신뢰하고 단위 테스트만 둔다).
+`LowStockEventConsumer.process()`는 `CustomerRepository` 대신 `AdminRepository`로 알림 대상을 조회한다 — 다만 재고를 등록한 특정 관리자 1명이 아니라 **역할이 재고 관리자(`AdminRole.STOCK_ADMIN`)인 관리자 전원**에게 보낸다(`LowStockEvent`엔 이제 특정 관리자 id가 없다). 적립금처럼 DB에 반영할 상태 변화가 없어 이메일 발송만 하고 끝난다(그래서 통합 테스트는 따로 만들지 않고, 이미 `OrderCompletedEventIntegrationTest`가 검증한 발행-구독 배관을 그대로 신뢰하고 단위 테스트만 둔다).
+
+## 실제 알림 채널 연동 — 이메일(`EmailNotificationSender`)
+
+두 컨슈머의 "알림"은 로그 시뮬레이션이 아니라 실제 이메일(SMTP)로 나간다. 수신자는 이벤트마다 다르다:
+- `OrderCompletedEvent` → 그 주문을 한 `Customer.email`
+- `LowStockEvent` → `AdminRepository.findAllByAdminRole(AdminRole.STOCK_ADMIN)`으로 찾은 관리자 전원의 `email`
+
+### 발송을 한 곳에 모은다
+```java
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class EmailNotificationSender {
+    private final JavaMailSender mailSender;
+
+    public void send(String to, String subject, String body) {
+        if (to == null || to.isBlank()) {
+            log.warn("이메일 주소가 없어 알림을 보내지 않습니다. subject={}", subject);
+            return;
+        }
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setTo(to);
+            message.setSubject(subject);
+            message.setText(body);
+            mailSender.send(message);
+        } catch (Exception e) {
+            log.error("이메일 발송 실패, to={}, subject={}", to, subject, e);
+        }
+    }
+}
+```
+**왜 실패를 여기서 삼키는가(중요)**:<br>
+`OrderCompletedEventConsumer.process()`는 이미 `customer.addPoint()` + `save()`로 적립금을 커밋한 "뒤"에 이 메서드를 호출한다. 메일 발송 예외가 `handle()`까지 전파되면 `nak()` → NATS 재전달 → `process()` 재실행 → **적립금 중복 지급**(멱등성 키 없음)으로 이어진다. 그래서 알림 발송 실패는 핵심 처리(적립금 지급, 재고관리자 조회)와 완전히 분리해 로그만 남기고 삼킨다 — `OrderCompletedEventPublisher`의 NATS 발행 실패 처리와 같은 원칙.
+
+### `Admin`에 `email` + `adminRole` 추가 (이름 충돌 주의)
+이 코드베이스엔 이미 `com.dev24.bookstore.auth.domain.Role`(`CUSTOMER`/`ADMIN`)이 있고, 이건 **Spring Security 인가 역할**이다(JWT 클레임, `@PreAuthorize("hasRole('ADMIN')")`에 쓰임 — `Admin.getRole()`은 지금도 항상 `Role.ADMIN`을 반환). "재고 관리자"는 알림 대상 그룹 분류일 뿐 인가와 무관한 **완전히 다른 개념**이라, 같은 `Role` enum에 얹지 않고 별도의 `AdminRole`(`GENERAL`/`STOCK_ADMIN`) enum을 새로 만들어 분리했다. 인증/인가 코드는 전혀 건드리지 않는다.
+
+`Admin`은 가입 API 없이 직접 생성되어 왔고 기존 3-인자 생성자(`loginId, passwordHash, name`) 호출부가 여러 테스트에 있어서, 그 생성자는 그대로 두고(`email=null`, `adminRole=GENERAL`로 채움) `email`/`adminRole`까지 지정하는 5-인자 생성자를 추가로 뒀다.
+
+### NATS 때와 달리 별도 on/off 플래그가 필요 없는 이유
+`JavaMailSenderImpl`은 필드만 설정하는 순수 POJO라 빈 생성 시점에 네트워크 연결을 시도하지 않는다(`Nats.connect()`처럼 즉시 접속 후 실패하는 구조가 아님) — `send()`를 실제로 호출할 때만 SMTP에 접속한다. 메일을 실제로 보내는 코드는 두 컨슈머 안에만 있고, 이미 `app.nats.enabled`로 게이팅되어 있어(NATS 없이는 이 컨슈머들 자체가 안 만들어짐) 다른 테스트/로컬 실행에 영향을 주지 않는다.
+
+### 메일 서버 — Mailpit
+`docker-compose.yml`에 `mailpit`(image `axllent/mailpit`) 서비스를 추가했다: SMTP 1025, 웹 UI/REST API 8025. `app` 서비스는 `SPRING_MAIL_HOST=mailpit`, `SPRING_MAIL_PORT=1025`로 연결한다. `docker compose up -d` 후 `http://localhost:8025`에서 실제로 도착한 메일을 확인할 수 있다. 로컬에서 docker-compose 없이 확인하려면:
+```bash
+docker run -p 1025:1025 -p 8025:8025 axllent/mailpit
+```
+
+### 실제로 메일이 발송되는지 확인하는 방법
+
+**`./gradlew test`만 돌려서는 실제 메일이 발송되지 않는다** — 착각하기 쉬운 부분이라 명확히 짚어둔다.
+- `EmailNotificationSenderTest`/`OrderCompletedEventConsumerTest`/`LowStockEventConsumerTest`는 전부 `JavaMailSender`/`EmailNotificationSender` 자체를 Mockito로 mock 처리한다 — 실제 SMTP 연결이 아예 일어나지 않는다.
+- `OrderCompletedEventIntegrationTest`는 mock 없이 진짜 `EmailNotificationSender` → `JavaMailSender` 코드 경로를 타지만, 이 테스트는 Testcontainers로 Postgres+NATS만 띄우고 Mailpit은 띄우지 않는다. 그래서 `spring.mail.host=localhost:1025`로 접속을 시도해도 받아줄 서버가 없어 연결이 실패하는데, `EmailNotificationSender.send()`가 실패를 로그만 남기고 삼키도록 설계되어 있어(적립금 중복 지급 방지, 위 설명 참고) 테스트 자체는 그냥 통과해버린다 — 메일은 조용히 발송 실패한다.
+
+**실제 발송을 눈으로 확인하려면**:
+1. `docker compose up -d`로 전체 스택(Mailpit 포함)을 띄운다.
+2. Swagger UI(`http://localhost:8080/swagger-ui/index.html`) 등으로 실제 회원가입 → 로그인 → 장바구니 → 구매 흐름을 태운다(구매 완료 시 `OrderCompletedEvent`가 발행되고, 재고가 안전재고 이하로 떨어지면 `LowStockEvent`도 함께 발행된다).
+3. `http://localhost:8025`(Mailpit 웹 UI)를 열어 실제로 도착한 메일을 확인한다.
+
+**자동화된 테스트로 검증하고 싶다면**(이번 범위엔 없음, 필요 시 추가 가능):<br>
+`OrderCompletedEventIntegrationTest`처럼 `GenericContainer<>("axllent/mailpit")`를 Testcontainers로 띄우고 `@DynamicPropertySource`로 `spring.mail.host`/`port`를 그 컨테이너로 연결한 뒤, Mailpit의 REST API(`GET http://<mailpit>:8025/api/v1/messages`)를 호출해 실제로 메일이 도착했는지 Awaitility로 폴링하면 된다.
 
 ## 커넥션 실패가 앱 전체를 죽이지 않게 (`app.nats.enabled`)
 

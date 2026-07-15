@@ -37,7 +37,7 @@
   별도 빈인 `OrderCompletedEventPublisher`의 `@TransactionalEventListener(phase = AFTER_COMMIT)`가 트랜잭션이 실제로 커밋된 뒤에만 콜백되어 NATS JetStream(subject `orders.completed`)으로 실제 발행한다 — "주문은 롤백됐는데 이벤트는 나간" 상황을 프레임워크 차원에서 차단.
 - **별도 컨슈머가 비동기 소비**:<br>
   - `OrderCompletedEventConsumer`가 앱 기동 시 durable push consumer로 구독해두고, 발행자와 스레드/트랜잭션을 공유하지 않고 소비한다.<br>
-  - 처리 내용은 적립금 지급(`Customer.point`, 결제금액의 1%)과 알림(로그로 시뮬레이션, 실제 채널 연동은 범위 밖). 실패 시 `message.nak()`으로 JetStream이 재전달하도록 위임.
+  - 처리 내용은 적립금 지급(`Customer.point`, 결제금액의 1%)과 `EmailNotificationSender`를 통한 실제 이메일 알림(`Customer.email`로 발송, 로컬/CI는 Mailpit). 실패 시 `message.nak()`으로 JetStream이 재전달하도록 위임.
 - **`app.nats.enabled` 플래그**:<br>
   - NATS 연결은 커넥션 생성 즉시 시도되고 실패하면 빈 생성이 실패하므로(Redis처럼 지연 연결이 아님), `app.book-seed.enabled`와 동일한 패턴으로 기본값 `false` 뒤에 숨겨뒀다 — 그래야 NATS를 안 쓰는 나머지 테스트/로컬 실행이 이 실패로 덩달아 죽지 않는다. docker-compose와 NATS 관련 테스트에서만 `true`로 켠다.
 - 통합 테스트(`OrderCompletedEventIntegrationTest`, Testcontainers Postgres+NATS)가 실제 `purchase()` 호출부터 컨슈머의 적립금 반영까지 Awaitility로 폴링 검증한다.
@@ -49,5 +49,7 @@
 - **발행 조건은 "상태"가 아니라 "전이(transition)"**:<br>
   - `purchase()`가 재고 차감 전/후 수량을 비교해 `beforeQuantity > safetyStock`이었다가 `afterQuantity <= safetyStock`이 된 경우에만 발행한다. 이미 안전재고 이하인 상태에서 추가 구매가 들어와도 재발행하지 않는다(관리자 알림 스팸 방지) — 사실 재고 검증 로직(`quantity - safetyStock < 요청수량`)이 안전재고 이하에서는 구매 자체를 막아버려서, 한 `Stock`당 이 전이는 사실상 한 번만 일어난다.
 - **subject만 다르고 스트림은 재사용**:<br>
-  - `NatsConfig`의 스트림이 이미 `subjects("orders.>")`라 `orders.low-stock`을 그대로 받는다 — `NatsConfig` 변경 없음. `LowStockEventConsumer`는 `AdminRepository`로 `Stock.admin`(재고 등록 관리자)을 조회해 재입고 알림을 로그로 남긴다(적립금처럼 DB에 남는 변화가 없어 통합 테스트는 두지 않고 단위 테스트만 둔다 — 발행-구독 배관 자체는 `OrderCompletedEventIntegrationTest`가 이미 검증).
+  - `NatsConfig`의 스트림이 이미 `subjects("orders.>")`라 `orders.low-stock`을 그대로 받는다 — `NatsConfig` 변경 없음. `LowStockEventConsumer`는 `AdminRepository.findAllByAdminRole(AdminRole.STOCK_ADMIN)`으로 찾은 재고 관리자 **전원**에게 `EmailNotificationSender`로 재입고 알림 이메일을 보낸다(적립금처럼 DB에 남는 변화가 없어 통합 테스트는 두지 않고 단위 테스트만 둔다 — 발행-구독 배관 자체는 `OrderCompletedEventIntegrationTest`가 이미 검증).
+- **`Admin.email`/`AdminRole` 신규 추가**:<br>
+  - `Role`(`CUSTOMER`/`ADMIN`, Spring Security 인가 역할)과는 완전히 별개인 `AdminRole`(`GENERAL`/`STOCK_ADMIN`, 알림 대상 그룹 분류)을 새로 추가했다 — 자세한 이름 충돌 이유는 `docs/NATS.md` 참고. 인증/인가 코드는 무변경.
 
