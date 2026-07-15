@@ -3,5 +3,7 @@ CREATE TABLE admin (
     login_id        VARCHAR(50)  NOT NULL,
     password_hash   VARCHAR(255) NOT NULL,
     name            VARCHAR(100),
+    email           VARCHAR(100),
+    admin_role      VARCHAR(20)  NOT NULL DEFAULT 'GENERAL',
     CONSTRAINT uk_admin_login_id UNIQUE (login_id)
 );

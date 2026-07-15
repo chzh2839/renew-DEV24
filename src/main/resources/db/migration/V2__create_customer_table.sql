@@ -10,5 +10,6 @@ CREATE TABLE customer (
     interest        VARCHAR(255),
     newsletter_yn   BOOLEAN      NOT NULL DEFAULT FALSE,
     joined_at       TIMESTAMP    NOT NULL,
+    point           INT          NOT NULL DEFAULT 0,
     CONSTRAINT uk_customer_login_id UNIQUE (login_id)
 );

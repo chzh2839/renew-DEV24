@@ -41,7 +41,7 @@ OrderCompletedEventConsumer  (앱 기동 시 durable push consumer로 미리 구
 | `OrderCompletedEventPublisher` | 트랜잭션 커밋 후에만 실제 NATS 발행 | `purchase/event/OrderCompletedEventPublisher.java` |
 | `OrderCompletedEventConsumer` | 앱 기동 시 구독, 적립금 지급 + 고객 이메일 알림 | `purchase/event/OrderCompletedEventConsumer.java` |
 | `PurchaseCommandService.purchase()` | 커밋 직전 `ApplicationEventPublisher`로 발행 트리거 | `purchase/service/PurchaseCommandService.java` |
-| `Customer.point` | 적립금 컬럼(`V7__add_point_to_customer.sql`) | `auth/domain/Customer.java` |
+| `Customer.point` | 적립금 컬럼(`V2__create_customer_table.sql`) | `auth/domain/Customer.java` |
 | `LowStockEvent` | 안전재고 이하 도달 시 오가는 페이로드(record) | `purchase/event/LowStockEvent.java` |
 | `LowStockEventPublisher` | 트랜잭션 커밋 후에만 실제 NATS 발행(subject `orders.low-stock`) | `purchase/event/LowStockEventPublisher.java` |
 | `LowStockEventConsumer` | 앱 기동 시 구독, 재고 관리자(STOCK_ADMIN) 전원에게 이메일 알림 | `purchase/event/LowStockEventConsumer.java` |
