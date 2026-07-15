@@ -2,6 +2,7 @@ package com.dev24.bookstore.auth.controller.request;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record CustomerSignUpRequest(
@@ -14,7 +15,10 @@ public record CustomerSignUpRequest(
         @NotBlank @Size(max = 100) String name,
         @NotBlank @Size(max = 50) String nickname,
         @NotBlank @Email @Size(max = 100) String email,
-        @Size(max = 20) String phone,
+
+        // phone 자체는 선택 입력(가입 시 필수 아님)이라 @NotBlank는 안 붙이지만, 값이 있으면 형식은 맞아야 한다.
+        @Pattern(regexp = "^01[016789]-\\d{3,4}-\\d{4}$", message = "휴대폰 번호 형식이 올바르지 않습니다 (예: 010-1234-5678)")
+        String phone,
         @Size(max = 255) String address,
         @Size(max = 255) String interest,
         boolean newsletterYn) {
