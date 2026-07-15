@@ -1,13 +1,19 @@
 package com.dev24.bookstore.review.controller;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.dev24.bookstore.common.response.ApiResponse;
@@ -15,6 +21,7 @@ import com.dev24.bookstore.review.controller.request.ReviewCreateRequest;
 import com.dev24.bookstore.review.controller.request.ReviewUpdateRequest;
 import com.dev24.bookstore.review.controller.response.ReviewResponse;
 import com.dev24.bookstore.review.service.ReviewCommandService;
+import com.dev24.bookstore.review.service.ReviewQueryService;
 
 import jakarta.validation.Valid;
 
@@ -26,6 +33,15 @@ import lombok.RequiredArgsConstructor;
 public class ReviewController {
 
     private final ReviewCommandService reviewCommandService;
+    private final ReviewQueryService reviewQueryService;
+
+    // 도서 상세 페이지에 노출되는 공개 목록이라 로그인 불필요(SecurityConfig의 PERMIT_ALL_PATHS 참고)
+    @GetMapping
+    public ApiResponse<Page<ReviewResponse>> list(
+            @RequestParam Long bookId,
+            @PageableDefault(size = 20, sort = "writtenAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ApiResponse.success(reviewQueryService.getReviews(bookId, pageable));
+    }
 
     // 고객 전용 - loginId는 JwtAuthenticationFilter가 SecurityContext에 세팅한 인증 정보에서 꺼낸다.
     // Authentication을 컨트롤러 파라미터로 직접 받으면 MockMvc(addFilters=false) 슬라이스 테스트에서
