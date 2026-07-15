@@ -9,6 +9,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,13 +18,19 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import com.dev24.bookstore.auth.domain.Admin;
+import com.dev24.bookstore.auth.repository.AdminRepository;
 import com.dev24.bookstore.book.client.KakaoBookClient;
 import com.dev24.bookstore.book.domain.Book;
 import com.dev24.bookstore.book.domain.BookStatus;
 import com.dev24.bookstore.book.repository.BookImageRepository;
 import com.dev24.bookstore.book.repository.BookRepository;
 import com.dev24.bookstore.book.repository.RatingRepository;
+import com.dev24.bookstore.purchase.domain.Stock;
+import com.dev24.bookstore.purchase.repository.StockRepository;
 
 @ExtendWith(MockitoExtension.class)
 class BookSeedServiceTest {
@@ -36,12 +43,25 @@ class BookSeedServiceTest {
     private BookImageRepository bookImageRepository;
     @Mock
     private RatingRepository ratingRepository;
+    @Mock
+    private AdminRepository adminRepository;
+    @Mock
+    private StockRepository stockRepository;
+    @Mock
+    private PasswordEncoder passwordEncoder;
 
     private BookSeedService bookSeedService;
 
     @BeforeEach
     void setUp() {
-        bookSeedService = new BookSeedService(kakaoBookClient, bookRepository, bookImageRepository, ratingRepository);
+        bookSeedService = new BookSeedService(kakaoBookClient, bookRepository, bookImageRepository, ratingRepository,
+                adminRepository, stockRepository, passwordEncoder);
+    }
+
+    private Admin seedAdmin() {
+        Admin admin = new Admin("book-seed-admin", "encoded", "도서 시딩 시스템 계정");
+        ReflectionTestUtils.setField(admin, "id", 1L);
+        return admin;
     }
 
     // 이미 카탈로그에 도서가 있으면 카카오 API를 아예 호출하지 않고 건너뛰는지 검증
@@ -54,15 +74,20 @@ class BookSeedServiceTest {
         verify(kakaoBookClient, never()).search(anyString());
     }
 
-    // 카카오 응답 도큐먼트가 Book/BookImage/Rating으로 올바르게 매핑되어 저장되는지 검증
-    // (isbn10+isbn13 혼합 문자열에서 13자리를 우선 선택, 검색어가 category로, 저자 배열이 콤마 join으로)
+    // 카카오 응답 도큐먼트가 Book/BookImage/Rating/Stock으로 올바르게 매핑되어 저장되는지 검증
+    // (isbn10+isbn13 혼합 문자열에서 13자리를 우선 선택, 검색어가 category로, 저자 배열이 콤마 join으로,
+    // 시딩용 관리자가 없으면 새로 만들어 Stock.admin으로 쓰고, sale_price가 Stock.salePrice로)
     @Test
     void seed_mapsDocumentFieldsCorrectly() {
         given(bookRepository.count()).willReturn(0L);
+        Admin seedAdmin = seedAdmin();
+        given(adminRepository.findByLoginId("book-seed-admin")).willReturn(Optional.empty());
+        given(passwordEncoder.encode(any())).willReturn("encoded");
+        given(adminRepository.save(any(Admin.class))).willReturn(seedAdmin);
         KakaoBookClient.Document document = new KakaoBookClient.Document(
                 "Do it! 점프 투 파이썬", "파이썬 입문서", "8983920775 9788983920774",
                 "2019-06-20T00:00:00.000+09:00", List.of("박응용", "홍길동"), "이지스퍼블리싱",
-                16920, "http://example.com/cover.jpg");
+                16920, 15000, "http://example.com/cover.jpg");
         given(kakaoBookClient.search("소설")).willReturn(List.of(document));
         given(kakaoBookClient.search("에세이")).willReturn(List.of());
         given(kakaoBookClient.search("자기계발")).willReturn(List.of());
@@ -74,9 +99,9 @@ class BookSeedServiceTest {
 
         bookSeedService.seed();
 
-        ArgumentCaptor<Book> captor = ArgumentCaptor.forClass(Book.class);
-        verify(bookRepository).save(captor.capture());
-        Book saved = captor.getValue();
+        ArgumentCaptor<Book> bookCaptor = ArgumentCaptor.forClass(Book.class);
+        verify(bookRepository).save(bookCaptor.capture());
+        Book saved = bookCaptor.getValue();
         assertThat(saved.getIsbn()).isEqualTo("9788983920774");
         assertThat(saved.getTitle()).isEqualTo("Do it! 점프 투 파이썬");
         assertThat(saved.getAuthors()).isEqualTo("박응용, 홍길동");
@@ -85,6 +110,45 @@ class BookSeedServiceTest {
         assertThat(saved.getStatus()).isEqualTo(BookStatus.ACTIVE);
         verify(bookImageRepository).save(any());
         verify(ratingRepository).save(any());
+
+        ArgumentCaptor<Stock> stockCaptor = ArgumentCaptor.forClass(Stock.class);
+        verify(stockRepository).save(stockCaptor.capture());
+        Stock savedStock = stockCaptor.getValue();
+        assertThat(savedStock.getBook()).isEqualTo(saved);
+        assertThat(savedStock.getAdmin()).isEqualTo(seedAdmin);
+        assertThat(savedStock.getQuantity()).isEqualTo(100);
+        assertThat(savedStock.getSalePrice()).isEqualTo(15000);
+        assertThat(savedStock.getSafetyStock()).isEqualTo(10);
+    }
+
+    // 시딩용 관리자가 이미 있으면 새로 만들지 않고 그대로 재사용하는지 검증
+    @Test
+    void seed_seedAdminAlreadyExists_reusesIt() {
+        given(bookRepository.count()).willReturn(0L);
+        given(adminRepository.findByLoginId("book-seed-admin")).willReturn(Optional.of(seedAdmin()));
+        given(kakaoBookClient.search(anyString())).willReturn(List.of());
+
+        bookSeedService.seed();
+
+        verify(adminRepository, never()).save(any(Admin.class));
+    }
+
+    // 두 인스턴스가 동시에 시딩용 관리자를 처음 만들려다 경합(login_id UNIQUE 위반)이 나도,
+    // 예외를 삼키고 먼저 만들어진 관리자를 다시 조회해 쓰는지 검증
+    @Test
+    void seed_seedAdminCreationRaces_reFetchesExistingAdmin() {
+        given(bookRepository.count()).willReturn(0L);
+        Admin seedAdmin = seedAdmin();
+        given(adminRepository.findByLoginId("book-seed-admin"))
+                .willReturn(Optional.empty())
+                .willReturn(Optional.of(seedAdmin));
+        given(passwordEncoder.encode(any())).willReturn("encoded");
+        given(adminRepository.save(any(Admin.class))).willThrow(new DataIntegrityViolationException("duplicate key"));
+        given(kakaoBookClient.search(anyString())).willReturn(List.of());
+
+        bookSeedService.seed();
+
+        verify(adminRepository, times(2)).findByLoginId("book-seed-admin");
     }
 
     // isbn이 이미 존재하는 도서는 저장을 건너뛰는지 검증
@@ -93,7 +157,7 @@ class BookSeedServiceTest {
         given(bookRepository.count()).willReturn(0L);
         KakaoBookClient.Document document = new KakaoBookClient.Document(
                 "제목", "내용", "9788983920774", "2019-06-20T00:00:00.000+09:00",
-                List.of("저자"), "출판사", 10000, "http://example.com/cover.jpg");
+                List.of("저자"), "출판사", 10000, 0, "http://example.com/cover.jpg");
         given(kakaoBookClient.search(anyString())).willReturn(List.of(document));
         given(bookRepository.existsByIsbn("9788983920774")).willReturn(true);
 
@@ -108,7 +172,7 @@ class BookSeedServiceTest {
         given(bookRepository.count()).willReturn(0L);
         KakaoBookClient.Document document = new KakaoBookClient.Document(
                 "제목", "내용", "", "2019-06-20T00:00:00.000+09:00",
-                List.of("저자"), "출판사", 10000, "http://example.com/cover.jpg");
+                List.of("저자"), "출판사", 10000, 0, "http://example.com/cover.jpg");
         given(kakaoBookClient.search(anyString())).willReturn(List.of(document));
 
         bookSeedService.seed();
@@ -118,13 +182,14 @@ class BookSeedServiceTest {
     }
 
     // app 인스턴스 2개가 동시에 시딩을 시도해 같은 isbn으로 저장 경합이 나도(DB unique 제약 위반),
-    // 예외를 삼키고 나머지 시딩을 계속 진행하는지 검증
+    // 예외를 삼키고 나머지 시딩을 계속 진행하는지, 그리고 Stock도 함께 저장되지 않는지 검증
     @Test
     void seed_duplicateKeyRaceOnSave_doesNotAbortRemainingSeeding() {
         given(bookRepository.count()).willReturn(0L);
+        given(adminRepository.findByLoginId("book-seed-admin")).willReturn(Optional.of(seedAdmin()));
         KakaoBookClient.Document document = new KakaoBookClient.Document(
                 "제목", "내용", "9788983920774", "2019-06-20T00:00:00.000+09:00",
-                List.of("저자"), "출판사", 10000, "http://example.com/cover.jpg");
+                List.of("저자"), "출판사", 10000, 0, "http://example.com/cover.jpg");
         given(kakaoBookClient.search(anyString())).willReturn(List.of(document));
         given(bookRepository.existsByIsbn("9788983920774")).willReturn(false);
         given(bookRepository.save(any(Book.class))).willThrow(new DataIntegrityViolationException("duplicate key"));
@@ -134,5 +199,6 @@ class BookSeedServiceTest {
         // 6개 키워드 모두 같은 isbn을 시도하지만 매번 예외를 던지고 넘어갈 뿐 seed() 자체는 정상 종료된다
         verify(bookRepository, times(6)).save(any(Book.class));
         verify(bookImageRepository, never()).save(any());
+        verify(stockRepository, never()).save(any());
     }
 }

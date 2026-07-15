@@ -141,6 +141,7 @@ erDiagram
 - `Stock.safety_stock`: 구매 가능 수량은 `quantity - safety_stock`로 검증(단순 재고 있음/없음이 아니라 임계치 기반 판매 가능 여부 판단). 임계치 이하로 떨어지면 `LowStockEvent`를 NATS JetStream으로 발행.
 - `Stock.version`: 동시 구매 시 oversell 방지용 낙관적 락. 비관적 락 대신 낙관적 락을 선택한 이유는 `MODERNIZATION_PLAN.md` 3절 참고.
 - 구매 완료 트랜잭션 커밋 후 적립금/알림은 `OrderCompletedEvent`로 NATS JetStream에 발행(비동기, 최종적 일관성으로 충분).
+- 관리자 도서/재고 등록 UI가 없는 범위(2절 참고)라, 도서 카탈로그 시딩(`BookSeedService`)이 책마다 `Stock`도 함께 만든다 — 수량/안전재고는 시딩 전용 기본값, `sale_price`는 카카오 `sale_price`(없으면 `price`로 대체)를 그대로 쓴다. `Stock.admin_id`엔 실제 관리자가 없으므로 시딩 전용 시스템 관리자(`book-seed-admin`, 로그인 목적 없음)를 등록자로 기록한다.
 
 ## 4. 리뷰 모듈
 

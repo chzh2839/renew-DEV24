@@ -6,6 +6,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 @Component
 public class KakaoBookClient {
 
@@ -45,6 +47,7 @@ public class KakaoBookClient {
             List<String> authors,
             String publisher,
             int price,
+            @JsonProperty("sale_price") int salePrice,
             String thumbnail) {
     }
 }
