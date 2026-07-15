@@ -71,4 +71,12 @@ public class Review {
         this.imageUrl = imageUrl;
         this.writtenAt = LocalDateTime.now();
     }
+
+    // 소유자 검증은 서비스 레이어의 책임 - 엔티티는 순수 데이터 홀더로 유지(Book.update()와 동일 원칙)
+    public void update(int score, String content, ReviewType type, String imageUrl) {
+        this.score = score;
+        this.content = content;
+        this.type = type;
+        this.imageUrl = imageUrl;
+    }
 }
