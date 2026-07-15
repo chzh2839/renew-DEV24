@@ -157,7 +157,7 @@ erDiagram
         bigint id PK
         bigint customer_id FK "레거시 c_num"
         bigint book_id FK "레거시 b_num"
-        bigint purchase_item_id FK "레거시 pd_num, 구매 인증 리뷰용"
+        bigint purchase_item_id FK,UK "레거시 pd_num, 구매 인증 리뷰용 - 구매 아이템 1개당 리뷰 최대 1개"
         int score "레거시 re_score"
         text content "레거시 re_content"
         varchar type "레거시 re_type: text/image"

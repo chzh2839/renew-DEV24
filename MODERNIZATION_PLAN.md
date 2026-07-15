@@ -19,7 +19,7 @@
 2. **영속성**: MyBatis → JPA + QueryDSL
 3. **API**: REST API 서버로 전환, 화면(JSP)은 최소 유지 — 백엔드 중심
 4. **범위**: 전체 재작성이 아니라 핵심 대표 모듈 4개를 선별해 깊게 개선, 나머지는 레거시로 보존하고 범위 밖으로 명시
-5. **추가 인프라**: Redis(캐싱 + 세션/리프레시 토큰), NATS JetStream(이벤트 발행), Nginx(리버스 프록시 + 로드밸런싱) 도입
+5. **추가 인프라**: Redis(캐싱 + 세션/리프레시 토큰), NATS JetStream(이벤트 발행), Nginx(리버스 프록시 + 로드밸런싱), MinIO(S3 호환 오브젝트 스토리지) 도입
 
 기존 `DEV24Test`는 손대지 않고 `legacy/` 하위(또는 별도 브랜치)로 보존해 README의 Before 근거로 사용한다. 신규 코드는 완전히 새 Spring Boot 프로젝트로 시작해 아래 4개 모듈만 끝까지 깊게 구현한다.
 
@@ -28,6 +28,7 @@
 - **Redis**: (a) 인증 모듈 — JWT 리프레시 토큰 저장 및 로그아웃 시 액세스 토큰 블랙리스트 처리. (b) 도서 카탈로그 — `@Cacheable` 기반 목록/상세 조회 캐싱, 캐시 히트·미스 응답시간 비교를 성능 개선 근거자료로 추가.
 - **NATS JetStream**: 구매 모듈 — 재고 차감은 정합성이 중요하므로 `@Transactional`+`@Version` 낙관적 락으로 동기 처리하고, 트랜잭션 커밋 후 부가 로직(적립금 지급/알림)만 `OrderCompletedEvent`로 발행해 별도 리스너가 비동기 소비하도록 분리한다. 재고가 안전재고 이하로 떨어지면 `LowStockEvent`도 같은 방식으로 발행 — 강한 정합성이 필요한 부분과 최종적 일관성으로 충분한 부분을 구분해 설계했다는 스토리, 그리고 동일 이벤트 패턴이 두 시나리오(주문 완료/재고 부족)에 재사용됨을 보여준다.
 - **Nginx**: 인프라 — app 컨테이너를 2개 이상 띄우고 Nginx를 리버스 프록시 겸 라운드로빈 로드밸런서로 앞단에 배치.
+- **MinIO**: 리뷰 모듈 — 포토 리뷰 이미지 저장. 레거시는 로컬 디스크(`C:\uploadStorage`)에 저장했는데, 이 프로젝트는 app 컨테이너가 2 replica로 뜨는 구조라 컨테이너별 로컬 디스크가 서로 분리돼 있어 그대로 재현하면 안 된다(인스턴스마다 파일이 따로 쌓여 다른 인스턴스가 응답하면 404). 그렇다고 진짜 AWS S3를 쓰면 `docker-compose up` 하나로 완결되던 로컬 개발 환경이 AWS 자격증명에 의존하게 되므로, S3 호환 API를 제공하는 MinIO를 로컬 컨테이너로 띄운다 — 코드는 실제 AWS SDK/presigned URL 업로드 패턴을 그대로 쓰면서, 실 배포 시엔 엔드포인트만 S3로 바꿔 끼우면 되는 구조.
 
 ## 3. 선정한 4개 핵심 모듈
 
@@ -61,7 +62,8 @@
 - **Redis 7** — 리프레시 토큰/로그아웃 블랙리스트(인증 모듈) + Spring Cache 캐싱(도서 카탈로그 모듈)
 - **NATS JetStream** — 단일 바이너리로 가볍게 동작(Zookeeper/별도 컨트롤러 클러스터 불필요), 구매 완료 후 적립금/알림, 안전재고 이하 시 재입고 알림 등을 비동기 이벤트로 분리(구매 모듈), 테스트는 Testcontainers(NATS 이미지 기반 GenericContainer) 사용
 - **Nginx** — 리버스 프록시 + app 2 replica 앞단 라운드로빈 로드밸런싱 데모
-- **Dockerfile(멀티스테이지) + docker-compose.yml**(app×2 + postgres + redis + nats + nginx) — `docker-compose up` 한 번으로 전체 인프라 로컬 실행
+- **MinIO** — S3 호환 오브젝트 스토리지, 리뷰 모듈의 포토 리뷰 이미지 저장. 클라이언트가 presigned URL로 MinIO에 직접 업로드(서버는 URL 발급만) — 이미지 바이트가 스프링 서버를 거치지 않아 app 인스턴스 부하가 늘지 않고, 실 배포 시엔 엔드포인트를 AWS S3로 바꿔 끼우기만 하면 되는 구조
+- **Dockerfile(멀티스테이지) + docker-compose.yml**(app×2 + postgres + redis + nats + nginx + minio) — `docker-compose up` 한 번으로 전체 인프라 로컬 실행
 - **컨테이너 메모리 제한** — `docker-compose.yml`에서 서비스별 `mem_limit`(또는 `deploy.resources.limits.memory`)로 최대 사용 메모리 상한 지정(예: DB(PostgreSQL) 512MB, Redis 256MB, NATS 128MB 등)
 
 ## 5. Phase 로드맵
@@ -121,6 +123,7 @@
 - 소유자 검증
 - `Page<ReviewResponse>` 표준 페이징
 - `@WebMvcTest`
+- **MinIO** 연동 — docker-compose에 MinIO 컨테이너 추가, 포토 리뷰용 presigned URL 발급 API(업로드는 클라이언트가 MinIO에 직접), 발급된 오브젝트 키를 `Review.imageUrl`로 저장
 
 ### Phase 6. 최소 데모 화면
 - Swagger UI + Postman/Insomnia 컬렉션을 기본 데모 경로로
@@ -144,7 +147,6 @@
 - 서비스 계층 스타일 통일: auth 모듈(`CustomerService`/`AdminService` 인터페이스+Impl)을 book 모듈(`BookQueryService`/`BookCommandService` 등 interface 없는 plain class) 스타일로 맞출지 검토 - 구현체가 하나뿐이라 인터페이스의 다형성 이득이 없음
 - 리프레시 토큰 회전(rotation) — 재사용 감지로 탈취 대응 강화
 - 재고 차감 동시성 전략 재검토: 선착순 한정판 같은 초고경합(flash sale) 시나리오에서는 낙관적 락이 재시도 폭주로 비효율적일 수 있어, 비관적 락이나 Redis 기반 원자적 카운터/분산 큐잉이 더 나을 수 있다는 트레이드오프(3절 참고) — 실제 도입 여부와, 도입한다면 전체 교체가 아니라 선착순 전용 경로로 한정할지 검토
-- 리뷰 파일 업로드
 
 ## 6. 검증 방법
 
@@ -154,5 +156,6 @@
 - Nginx를 통해 반복 요청 시 두 app 인스턴스에 라운드로빈으로 분산되는지 로그로 확인
 - 구매 완료 시 NATS JetStream에 `OrderCompletedEvent`가 발행되고 컨슈머가 정상 소비(적립금/알림 반영)하는지 확인
 - 재고가 안전재고 임계치 이하로 떨어지는 시나리오에서 `LowStockEvent`가 발행되고, 안전재고 초과 주문은 거부되는지 확인
+- 포토 리뷰 업로드 시 발급받은 presigned URL로 MinIO에 실제 저장되는지, 저장된 오브젝트 키로 이미지가 정상 조회되는지 확인
 - 컨테이너별 메모리 제한 설정 후 `docker stats`로 각 컨테이너가 지정한 상한 내에서 동작하는지 확인
 - GitHub Actions가 push 시 빌드+테스트를 정상 통과하는지 Actions 탭에서 확인
