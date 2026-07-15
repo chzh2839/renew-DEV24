@@ -119,7 +119,7 @@
 
 ### Phase 5. 리뷰 모듈
 - `Review` 엔티티/DTO
-- OWASP HTML Sanitizer
+- OWASP HTML Sanitizer — 리뷰 내용에 `<script>` 등 위험한 HTML/스크립트가 섞여 들어와도 저장 전에 제거해, 한 번 저장되면 그 리뷰를 보는 모든 사용자가 공격 대상이 되는 저장형 XSS(1절 As-Is에서 지적한 레거시 미이스케이프 출력 문제)를 원천 차단
 - 소유자 검증
 - `Page<ReviewResponse>` 표준 페이징
 - `@WebMvcTest`
