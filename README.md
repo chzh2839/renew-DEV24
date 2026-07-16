@@ -66,6 +66,22 @@ docker compose up -d
 
 각 구성 요소를 왜 이렇게 만들었는지(멀티스테이지 Dockerfile, healthcheck, mem_limit, Nginx 라운드로빈, Flyway 베이스라인 등)와 단계별 명령어·트러블슈팅은 [`docs/DOCKER.md`](./docs/DOCKER.md) 참고.
 
+### 데모 흐름
+
+별도 프론트엔드 없이 Swagger UI와 Postman 컬렉션을 데모 경로로 사용한다.
+
+- **Swagger UI**:<br>
+  - `http://localhost:8080/swagger-ui/index.html`에서 Authorize 버튼에 로그인으로 발급받은 accessToken을 입력하면 인증이 필요한 API도 바로 호출 가능
+- **Postman 컬렉션**:<br>
+  - [`docs/postman/bookstore.postman_collection.json`](./docs/postman/bookstore.postman_collection.json)을 Postman에 import하면
+  로그인 → 도서 목록/상세 → 장바구니 담기 → 구매 → 리뷰(텍스트/포토) 조회·작성 흐름을 폴더 순서(인증 → 도서 → 장바구니 → 구매 → 리뷰)대로 재현할 수 있다.<br>
+  - 로그인 응답의 accessToken/refreshToken, 장바구니 담기 응답의 cartItemId는 컬렉션 변수에 자동 저장되어 뒤 요청에 그대로 전달된다. 단, 리뷰 작성에 필요한 `purchaseItemId`는 구매 API 응답에 포함되지 않으므로 DB에서 직접 확인해 `purchaseItemId` 변수에 입력해야 한다.<br>
+  - 포토 리뷰는 1) presigned URL 발급 → 2) 발급받은 URL로 SeaweedFS에 이미지 직접 업로드 → 3) 리뷰 작성 3단계로 진행하며, 자세한 원리는 [`docs/REVIEW_IMAGE.md`](./docs/REVIEW_IMAGE.md) 참고.<br>
+  - **2번 업로드 단계 주의**:
+    - `POST /api/reviews/presigned-url`의 `fileName`은 문자열 메타데이터일 뿐 실제 파일이 아니다. 진짜 이미지 바이트는 그 응답으로 받은 `uploadUrl`에 **별도로** `PUT` 요청을 보내면서 실어야 한다.
+    - Postman 컬렉션은 로컬 파일 경로를 export에 담지 않으므로(보안/이식성 때문에 의도된 동작) "포토 리뷰 2) 이미지 업로드" 요청을 열 때마다 Body 탭 > **binary**에서 실제 이미지 파일을 직접 선택한 뒤 Send해야 한다.
+    - 이걸 빠뜨리면 빈(0바이트) 오브젝트가 업로드되어 비동기 검증(`ReviewImageValidationListener`)이 가짜 이미지로 판정, 리뷰가 자동으로 `TEXT`로 되돌아간다.
+
 ## Out of Scope
 
 이번 리팩토링은 핵심 대표 모듈(인증, 도서 카탈로그, 장바구니/구매/재고, 리뷰) 4개만 깊게 개선한다.<br> 아래 모듈은 `legacy/DEV24Test`에 그대로 남아있고 신규 스택으로 포팅하지 않는다.

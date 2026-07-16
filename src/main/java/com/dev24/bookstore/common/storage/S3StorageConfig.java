@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Configuration;
 
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
+import software.amazon.awssdk.core.checksums.ResponseChecksumValidation;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
@@ -29,6 +31,12 @@ public class S3StorageConfig {
                 .region(Region.US_EAST_1) // S3 호환 스토리지엔 리전 개념이 없지만 SDK가 필수로 요구해 더미 값
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
                 .serviceConfiguration(pathStyleConfig())
+                // SDK 2.30부터 PutObject/GetObject에 기본으로 체크섬을 계산/검증하는데(WHEN_SUPPORTED),
+                // SeaweedFS는 이 체크섬 응답 방식을 온전히 지원하지 않아 GetObject가 예외 없이 빈 바이트를
+                // 반환하는 문제가 있었다(리뷰 이미지 검증이 항상 실패로 오판). API가 필수로 요구할 때만
+                // 체크섬을 쓰도록 낮춰 이 호환성 문제를 피한다.
+                .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
+                .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
                 .build();
     }
 
