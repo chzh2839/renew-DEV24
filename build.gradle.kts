@@ -2,6 +2,7 @@ plugins {
 	java
 	id("org.springframework.boot") version "3.5.16"
 	id("io.spring.dependency-management") version "1.1.7"
+	jacoco
 }
 
 group = "com.dev24"
@@ -60,4 +61,29 @@ tasks.withType<Test> {
 
 tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
 	archiveFileName.set("app.jar")
+}
+
+jacoco {
+	toolVersion = "0.8.12"
+}
+
+tasks.test {
+	finalizedBy(tasks.jacocoTestReport)
+}
+
+tasks.jacocoTestReport {
+	// dependsOn(tasks.test)를 일부러 넣지 않는다 - finalizedBy와 서로 dependsOn하는 순환 관계가 되면
+	// test가 실패했을 때 Gradle이 finalizedBy 자체를 건너뛰어 리포트가 아예 생성되지 않는 문제가 있다
+	// (https://github.com/gradle/gradle/issues/27707). finalizedBy만으로 순서 보장은 충분하고,
+	// 대신 이 태스크를 단독 실행하려면 먼저 ./gradlew test를 실행해 최신 실행 데이터를 만들어둬야 한다.
+	reports {
+		xml.required.set(true)
+		html.required.set(true)
+	}
+	// QueryDSL이 생성하는 Q-클래스는 순수 보일러플레이트라 커버리지 대상에서 제외
+	classDirectories.setFrom(
+		files(classDirectories.files.map {
+			fileTree(it) { exclude("**/Q*.class") }
+		})
+	)
 }
