@@ -2,10 +2,10 @@ name: Build
 
 on:
   workflow_dispatch:
-#  push:
-#    branches: [ main ]
-#  pull_request:
-#    branches: [ main ]
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   build:
@@ -40,9 +40,28 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build and test
+      - name: Build
+        run: ./gradlew assemble
+
+      - name: Test
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/bookstore
           SPRING_DATASOURCE_USERNAME: bookstore
           SPRING_DATASOURCE_PASSWORD: bookstore
-        run: ./gradlew build
+        run: ./gradlew test
+        # test에 finalizedBy(jacocoTestReport)가 걸려있어 테스트가 일부 실패해도 이 스텝 안에서
+        # 커버리지 리포트까지 함께 생성된다(build.gradle.kts 참고) - 별도 스텝으로 또 호출할 필요 없음.
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/test
+
+      - name: Upload JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: build/reports/jacoco/test/html
