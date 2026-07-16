@@ -54,6 +54,7 @@ To-Be 스키마는 [`docs/ERD.md`](./docs/ERD.md) 참고.
 _작성 예정 (Phase 8) — 하드코딩 자격증명, 평문 비밀번호 비교, 미해결 성능 이슈, 트랜잭션 불일치 등 실제 문제와 해결 방법을 before/after 표로 정리 예정_
 
 - 도서 카탈로그 성능(인덱스 추가 전/후 `EXPLAIN ANALYZE` 실측 + Redis 캐시 히트/미스 응답시간 비교): [`docs/PERFORMANCE.md`](./docs/PERFORMANCE.md)
+- 4개 핵심 모듈 단위/통합 테스트 커버리지 감사 및 보완: [`docs/TESTING.md`](./docs/TESTING.md)
 
 ## 실행 방법
 
