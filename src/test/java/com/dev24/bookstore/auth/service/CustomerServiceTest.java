@@ -32,7 +32,7 @@ class CustomerServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        customerService = new CustomerServiceImpl(customerRepository, passwordEncoder);
+        customerService = new CustomerService(customerRepository, passwordEncoder);
     }
 
     // 회원가입 시 원문 비밀번호가 BCrypt로 해싱되어 저장되는지 검증

@@ -31,7 +31,7 @@ class AdminServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        adminService = new AdminServiceImpl(adminRepository, passwordEncoder);
+        adminService = new AdminService(adminRepository, passwordEncoder);
     }
 
     // 올바른 비밀번호로 로그인 시 저장된 Admin 엔티티를 반환하는지 검증

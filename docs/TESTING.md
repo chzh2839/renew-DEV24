@@ -16,8 +16,8 @@
 | `JwtAuthenticationFilter` | `JwtAuthenticationFilterTest` | 단위 |
 | `JwtTokenProvider` | `JwtTokenProviderTest` | 단위 |
 | `RefreshTokenStore` | `RefreshTokenStoreTest` | 단위 |
-| `AdminServiceImpl` | `AdminServiceTest` | 단위(Mockito) |
-| `CustomerServiceImpl` | `CustomerServiceTest` | 단위(Mockito) |
+| `AdminService` | `AdminServiceTest` | 단위(Mockito) |
+| `CustomerService` | `CustomerServiceTest` | 단위(Mockito) |
 
 ### 도서 카탈로그(book)
 
