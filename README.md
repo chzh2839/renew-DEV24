@@ -4,11 +4,42 @@
 
 ## 개요
 
-_작성 예정 (Phase 8에서 최종 정리)_
+2020년에 만든 레거시 도서 쇼핑몰(Spring 5 + MyBatis + JSP, `legacy/DEV24Test`)을 Spring Boot 3 + JPA 기반으로 현대화한 프로젝트다. 전체 모듈을 얕게 포팅하는 대신 **인증 / 도서 카탈로그 / 장바구니·구매·재고 / 리뷰** 4개 핵심 모듈만 골라 깊게 개선했다(제외한 모듈과 이유는 [Out of Scope](#out-of-scope) 참고).
+
+단순히 프레임워크만 갈아탄 게 아니라, 레거시가 안고 있던 실제 문제(평문 비밀번호 비교, 하드코딩된 DB 자격증명, 인덱스 없는 검색, 트랜잭션 경계 불일치 등 — [레거시 대비 개선점](#레거시-대비-개선점) 참고)를 근거를 남기며 고치는 데 집중했다.<br>
+그래서 이 저장소 곳곳에는 "왜 이렇게 했는지"를 설명하는 `docs/*.md`와 `EXPLAIN ANALYZE`/응답시간 실측치(`docs/PERFORMANCE.md`)가 함께 있다.<br>
+app 2 replica + Nginx 라운드로빈, Redis/NATS/SeaweedFS를 곁들인 `docker-compose.yml` 한 번으로 전체 인프라가 로컬에서 그대로 재현된다.
 
 ## 아키텍처
 
-_작성 예정 — Phase 1 이후 앱 골격이 만들어지면 다이어그램 추가_
+```mermaid
+graph TB
+    Client["클라이언트<br/>Swagger UI / Postman"]
+    Nginx["Nginx<br/>리버스 프록시 + 라운드로빈"]
+    App1["App #1<br/>Spring Boot"]
+    App2["App #2<br/>Spring Boot"]
+    Postgres[("PostgreSQL 16<br/>Flyway")]
+    Redis[("Redis 7<br/>토큰/캐시")]
+    NATS{{"NATS JetStream"}}
+    SeaweedFS[("SeaweedFS<br/>S3 호환 스토리지")]
+    Mailpit["Mailpit<br/>로컬 SMTP"]
+
+    Client --> Nginx
+    Nginx --> App1
+    Nginx --> App2
+    App1 --> Postgres
+    App1 --> Redis
+    App1 --> NATS
+    App1 --> SeaweedFS
+    App1 --> Mailpit
+    App2 --> Postgres
+    App2 --> Redis
+    App2 --> NATS
+    App2 --> SeaweedFS
+    App2 --> Mailpit
+```
+
+앱은 상태를 갖지 않는 REST API(JWT 인증)라 2개 replica 중 어느 인스턴스가 요청을 받아도 동일하게 동작하고, Nginx가 그 앞단에서 라운드로빈으로 분산한다. Postgres(영속 데이터)·Redis(토큰/캐시)·NATS JetStream(구매완료/재고부족 비동기 이벤트)·SeaweedFS(포토 리뷰 이미지)·Mailpit(로컬 메일 확인용)은 모두 `docker-compose.yml`에 컨테이너 하나씩으로 정의돼 있다.
 
 ### 이벤트 브로커: Kafka 대신 NATS JetStream를 택한 이유
 
@@ -51,9 +82,20 @@ To-Be 스키마는 [`docs/ERD.md`](./docs/ERD.md) 참고.
 
 ## 레거시 대비 개선점
 
-_작성 예정 (Phase 8) — 하드코딩 자격증명, 평문 비밀번호 비교, 미해결 성능 이슈, 트랜잭션 불일치 등 실제 문제와 해결 방법을 before/after 표로 정리 예정_
+| 영역 | Before (레거시) | After (리모델링) |
+|---|---|---|
+| DB 자격증명 | `root-context.xml`에 Oracle 계정/비밀번호가 평문으로 하드코딩되어 커밋됨 | 환경변수로 주입(`APP_JWT_SECRET` 등은 값이 없으면 기동 자체가 실패하도록 강제), 코드에 평문 비밀 없음 |
+| 비밀번호 저장/인증 | `query/Login.xml`이 SQL `WHERE c_passwd = #{c_passwd}`로 평문 비교, insert/update도 해싱 없이 평문 저장 | `BCryptPasswordEncoder`로 해시 저장 + 애플리케이션 레벨 `matches()` 비교 |
+| XSS | `freeboardDetail.jsp` 등이 `${detail.fb_content}`를 이스케이프 없이 EL로 직접 출력 — 저장형 XSS 가능 | OWASP HTML Sanitizer(`HtmlSanitizer.java`)로 저장 전 위험 태그/속성 제거 |
+| 페이징 | `Book.xml`의 `bookList`가 도메인마다 3-depth rownum 서브쿼리 + 수동 인덱스 힌트를 개별 작성 | Spring Data `Pageable` 표준 페이징으로 통일 |
+| 검색 성능 | 앞뒤 와일드카드 LIKE + 4컬럼 OR, 인덱스 없이 풀스캔 유발 | pg_trgm 트라이그램 인덱스 추가, 실측상 키워드 검색 최대 ~250배 개선(145.6ms → 0.58ms) |
+| 캐시 | 없음(매 요청 DB 조회) | Redis 기반 Spring Cache — 상세조회 응답시간 최대 1.8배, 목록검색 최대 5.4배 개선 |
+| 인증 방식 | 세션 기반(`JSESSIONID`), 서버가 상태를 가짐 | JWT Stateless — app 2 replica + Nginx 라운드로빈에서도 세션 동기화 불필요 |
+| 트랜잭션 | 구매 흐름이 `/purchaseInsert`, `/pdetailInsert`, `/purchasedItemDelete` 등 별도 AJAX 엔드포인트로 쪼개져 일부만 `@Transactional` — 중간 실패 시 주문 헤더만 남거나 장바구니 미삭제 등 정합성 깨질 위험 | `PurchaseCommandService.purchase()` 전체를 단일 `@Transactional`로 묶고, `Stock.version` 낙관적 락으로 동시 주문 시 오버셀 방지 |
+| 비동기 처리 | 없음(전부 동기 처리) | NATS JetStream으로 구매완료/재고부족 이벤트를 커밋 후 비동기 발행, at-least-once 재전달 보장 |
 
-- 도서 카탈로그 성능(인덱스 추가 전/후 `EXPLAIN ANALYZE` 실측 + Redis 캐시 히트/미스 응답시간 비교): [`docs/PERFORMANCE.md`](./docs/PERFORMANCE.md)
+실측 근거는 [`docs/PERFORMANCE.md`](./docs/PERFORMANCE.md), 설계 이유는 [`docs/JWT.md`](./docs/JWT.md)/[`docs/NATS.md`](./docs/NATS.md)/[`docs/PURCHASE.md`](./docs/PURCHASE.md) 등 각 `docs/*.md` 참고.
+
 - 4개 핵심 모듈 단위/통합 테스트 커버리지 감사 및 보완: [`docs/TESTING.md`](./docs/TESTING.md)
 - JaCoCo 커버리지 측정 설정 및 리포트 읽는 법: [`docs/JACOCO.md`](./docs/JACOCO.md)
 
