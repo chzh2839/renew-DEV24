@@ -143,7 +143,7 @@
 - **오브젝트 스토리지 연동**(SeaweedFS) — docker-compose에 SeaweedFS 컨테이너 추가, 포토 리뷰용 presigned URL 발급 API(업로드는 클라이언트가 SeaweedFS에 직접), 발급된 오브젝트 키를 `Review.imageUrl`로 저장
 
 ### Phase 6. 최소 데모 화면
-- Swagger UI + Postman/Insomnia 컬렉션을 기본 데모 경로로
+- Swagger UI
 - 필요시 로그인→목록→장바구니→구매→리뷰 흐름만 도는 최소 정적 페이지 하나만 추가
 
 ### Phase 7. 테스트/CI 마무리

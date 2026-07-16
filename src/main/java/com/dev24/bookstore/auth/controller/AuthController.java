@@ -9,6 +9,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import com.dev24.bookstore.auth.domain.Admin;
 import com.dev24.bookstore.auth.domain.Customer;
 import com.dev24.bookstore.auth.controller.request.CustomerSignUpRequest;
@@ -36,6 +39,7 @@ import lombok.RequiredArgsConstructor;
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
+@Tag(name = "인증", description = "회원가입/로그인/토큰 재발급/로그아웃")
 public class AuthController {
 
     private final CustomerService customerService;
@@ -45,6 +49,7 @@ public class AuthController {
     private final AccessTokenBlacklist accessTokenBlacklist;
 
     // 고객 회원가입 - 비밀번호를 BCrypt로 해싱해 저장
+    @Operation(summary = "고객 회원가입", description = "비밀번호를 BCrypt로 해싱해 저장")
     @PostMapping("/customers/signup")
     public ApiResponse<CustomerSignUpResponse> signUpCustomer(@Valid @RequestBody CustomerSignUpRequest request) {
         CustomerSignUpCommand command = new CustomerSignUpCommand(
@@ -55,6 +60,7 @@ public class AuthController {
     }
 
     // 고객 로그인 - 인증 성공 시 액세스 토큰 발급 + 리프레시 토큰 Redis에 저장
+    @Operation(summary = "고객 로그인", description = "인증 성공 시 액세스 토큰 발급 + 리프레시 토큰 Redis에 저장")
     @PostMapping("/customers/login")
     public ApiResponse<TokenResponse> loginCustomer(@Valid @RequestBody LoginRequest request) {
         Customer customer = customerService.authenticate(request.loginId(), request.password());
@@ -64,6 +70,7 @@ public class AuthController {
     }
 
     // 관리자 로그인 - 자기가입 없이 기존 관리자 계정으로만 인증(고객 로그인과 동일한 토큰 발급 흐름)
+    @Operation(summary = "관리자 로그인", description = "자기가입 없이 기존 관리자 계정으로만 인증(고객 로그인과 동일한 토큰 발급 흐름)")
     @PostMapping("/admins/login")
     public ApiResponse<TokenResponse> loginAdmin(@Valid @RequestBody LoginRequest request) {
         Admin admin = adminService.authenticate(request.loginId(), request.password());
@@ -73,6 +80,7 @@ public class AuthController {
     }
 
     // 액세스 토큰 재발급 - Redis에 저장된 리프레시 토큰으로 신원 확인 후 새 액세스 토큰만 발급(리프레시 토큰은 그대로 재사용)
+    @Operation(summary = "액세스 토큰 재발급", description = "Redis에 저장된 리프레시 토큰으로 신원 확인 후 새 액세스 토큰만 발급(리프레시 토큰은 그대로 재사용)")
     @PostMapping("/refresh")
     public ApiResponse<TokenResponse> refresh(@Valid @RequestBody RefreshTokenRequest request) {
         RefreshTokenPayload payload = refreshTokenStore.find(request.refreshToken())
@@ -82,6 +90,7 @@ public class AuthController {
     }
 
     // 로그아웃 - 현재 액세스 토큰을 남은 유효시간만큼 블랙리스트에 등록하고, 리프레시 토큰은 Redis에서 즉시 삭제
+    @Operation(summary = "로그아웃", description = "현재 액세스 토큰을 남은 유효시간만큼 블랙리스트에 등록하고, 리프레시 토큰은 Redis에서 즉시 삭제")
     @PostMapping("/logout")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> logout(HttpServletRequest servletRequest, @Valid @RequestBody RefreshTokenRequest request) {
