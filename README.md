@@ -75,6 +75,7 @@ graph TB
 - **Nginx** — 리버스 프록시 + app 2 replica 앞단 라운드로빈 로드밸런싱 데모
 - **Dockerfile(멀티스테이지) + docker-compose.yml**(app×2 + postgres + redis + nats + nginx) — `docker-compose up` 한 번으로 전체 인프라 로컬 실행
 - **컨테이너 메모리 제한** — `docker-compose.yml`에서 서비스별 `mem_limit`(또는 `deploy.resources.limits.memory`)로 최대 사용 메모리 상한 지정(예: DB(PostgreSQL) 512MB, Redis 256MB, NATS 128MB 등)
+- **Claude Code (Anthropic)** — AI 코딩 어시스턴트를 활용해 개발
 
 ## ERD
 
