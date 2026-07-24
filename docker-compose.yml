@@ -143,6 +143,26 @@ services:
     mem_limit: 64m
     networks: [bookstore-net]
 
+  # 메트릭 수집 - app의 /actuator/prometheus를 스크래핑한다. nginx를 거치지 않고 내부망(bookstore-net)에서
+  # app:8080에 직접 접근한다 - Docker 자체 healthcheck와 동일한 신뢰 경계다(docs/OBSERVABILITY.md 참고).
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 192m
+    networks: [bookstore-net]
+
 networks:
   bookstore-net:
     driver: bridge
@@ -151,3 +171,4 @@ volumes:
   pgdata:
   natsdata:
   seaweedfsdata:
+  prometheusdata:

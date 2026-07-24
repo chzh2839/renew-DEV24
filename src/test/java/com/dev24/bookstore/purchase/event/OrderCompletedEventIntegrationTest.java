@@ -33,6 +33,8 @@ import com.dev24.bookstore.purchase.repository.CartRepository;
 import com.dev24.bookstore.purchase.repository.StockRepository;
 import com.dev24.bookstore.purchase.service.PurchaseCommandService;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 // 실제 구매(purchase()) 커밋 -> OrderCompletedEventPublisher가 NATS로 발행 -> 앱 기동 시 이미 구독 중인
 // OrderCompletedEventConsumer가 비동기로 소비해 적립금을 지급하는 전체 흐름을 end-to-end로 검증한다.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -66,6 +68,8 @@ class OrderCompletedEventIntegrationTest {
     private CartRepository cartRepository;
     @Autowired
     private StockRepository stockRepository;
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     // 구매 완료 -> NATS 발행 -> 컨슈머 소비 후 적립금(결제금액의 1%)이 비동기로 반영되는지 검증
     @Test
@@ -89,5 +93,9 @@ class OrderCompletedEventIntegrationTest {
         await().atMost(Duration.ofSeconds(10))
                 .untilAsserted(() -> assertThat(customerRepository.findById(customer.getId()).orElseThrow().getPoint())
                         .isEqualTo(200));
+
+        // 적립금 지급과 함께 커스텀 Micrometer 카운터(dev24.events.processed)도 실제로 오르는지 확인
+        assertThat(meterRegistry.counter("dev24.events.processed", "event", "order-completed", "result", "success")
+                .count()).isEqualTo(1.0);
     }
 }

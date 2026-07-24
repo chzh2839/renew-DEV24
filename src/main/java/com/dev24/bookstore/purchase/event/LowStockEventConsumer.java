@@ -12,6 +12,7 @@ import com.dev24.bookstore.auth.repository.AdminRepository;
 import com.dev24.bookstore.common.notification.EmailNotificationSender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import io.nats.client.Connection;
 import io.nats.client.Dispatcher;
 import io.nats.client.JetStream;
@@ -34,12 +35,14 @@ public class LowStockEventConsumer {
 
     private static final String SUBJECT = "orders.low-stock";
     private static final String DURABLE_NAME = "low-stock-consumer";
+    private static final String EVENT_TAG_VALUE = "low-stock";
 
     private final Connection natsConnection;
     private final JetStream jetStream;
     private final AdminRepository adminRepository;
     private final EmailNotificationSender emailNotificationSender;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
     private Dispatcher dispatcher;
     private JetStreamSubscription subscription;
@@ -47,11 +50,16 @@ public class LowStockEventConsumer {
     @PostConstruct
     public void subscribe() throws IOException, JetStreamApiException {
         dispatcher = natsConnection.createDispatcher();
+        // deliverGroup(큐 그룹) 없이 동일한 durable 이름을 여러 곳에서 구독하면, JetStream의 durable push
+        // consumer는 동시에 구독자 하나만 허용하기 때문에 app이 2 replica로 뜰 때 두 번째 인스턴스가
+        // [SUB-90012] Consumer is already bound to a subscription으로 기동 자체에 실패한다(실제로 겪음,
+        // OrderCompletedEventConsumer와 동일한 원인).
         PushSubscribeOptions options = PushSubscribeOptions.builder()
                 .durable(DURABLE_NAME)
+                .deliverGroup(DURABLE_NAME)
                 .build();
         // autoAck=false - 처리 성공/실패에 따라 직접 ack/nak하기 위함
-        subscription = jetStream.subscribe(SUBJECT, dispatcher, this::handle, false, options);
+        subscription = jetStream.subscribe(SUBJECT, DURABLE_NAME, dispatcher, this::handle, false, options);
     }
 
     private void handle(Message message) {
@@ -59,9 +67,11 @@ public class LowStockEventConsumer {
             LowStockEvent event = objectMapper.readValue(message.getData(), LowStockEvent.class);
             process(event);
             message.ack();
+            meterRegistry.counter("dev24.events.processed", "event", EVENT_TAG_VALUE, "result", "success").increment();
         } catch (Exception e) {
             log.error("LowStockEvent 처리 실패 - NATS 재전달 대기", e);
             message.nak();
+            meterRegistry.counter("dev24.events.processed", "event", EVENT_TAG_VALUE, "result", "failure").increment();
         }
     }
 

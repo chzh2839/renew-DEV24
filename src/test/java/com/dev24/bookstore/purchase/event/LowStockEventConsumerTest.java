@@ -24,6 +24,7 @@ import com.dev24.bookstore.auth.repository.AdminRepository;
 import com.dev24.bookstore.common.notification.EmailNotificationSender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.nats.client.Connection;
 import io.nats.client.JetStream;
 
@@ -46,7 +47,8 @@ class LowStockEventConsumerTest {
     @BeforeEach
     void setUp() {
         consumer = new LowStockEventConsumer(
-                natsConnection, jetStream, adminRepository, emailNotificationSender, objectMapper);
+                natsConnection, jetStream, adminRepository, emailNotificationSender, objectMapper,
+                new SimpleMeterRegistry());
     }
 
     private Admin stockAdmin(long id, String email) {

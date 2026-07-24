@@ -42,6 +42,8 @@ import com.dev24.bookstore.purchase.service.PurchaseCommandService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 // 구매로 재고가 안전재고 이하로 "떨어지는 순간" -> LowStockEventPublisher가 NATS로 발행 -> 앱 기동 시 이미 구독 중인
 // LowStockEventConsumer가 비동기로 소비해 재고 관리자(STOCK_ADMIN)에게 실제 이메일(Mailpit)을 발송하고
 // email_notification_history에 SUCCESS로 기록하는 전체 흐름을 end-to-end로 검증한다.
@@ -85,6 +87,8 @@ class LowStockEventIntegrationTest {
     private StockRepository stockRepository;
     @Autowired
     private EmailNotificationHistoryRepository emailNotificationHistoryRepository;
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     // 구매로 재고가 안전재고에 처음 도달 -> NATS 발행 -> 컨슈머 소비 후 재고 관리자에게 실제 메일이 발송되고
     // email_notification_history에 SUCCESS로 남는지, Mailpit에 실제로 도착했는지까지 검증
@@ -124,5 +128,9 @@ class LowStockEventIntegrationTest {
         HttpResponse<String> mailpitResponse = httpClient.send(mailpitRequest, HttpResponse.BodyHandlers.ofString());
         JsonNode body = new ObjectMapper().readTree(mailpitResponse.body());
         assertThat(body.get("messages_count").asInt()).isGreaterThanOrEqualTo(1);
+
+        // 알림 발송과 함께 커스텀 Micrometer 카운터(dev24.events.processed)도 실제로 오르는지 확인
+        assertThat(meterRegistry.counter("dev24.events.processed", "event", "low-stock", "result", "success")
+                .count()).isEqualTo(1.0);
     }
 }

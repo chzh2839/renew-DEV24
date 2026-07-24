@@ -212,8 +212,9 @@ public class OrderCompletedEventConsumer {
 > 위 코드는 처음 이 패턴을 설명할 때 쓴 기본형이다. 실제 코드에서는 `log.info(...)` 알림 줄이 진짜 이메일 발송(`EmailNotificationSender`)으로 바뀌어 있다 — 자세한 내용은 아래 "실제 알림 채널 연동 — 이메일" 절 참고.
 
 설계 포인트:
-- **durable push consumer**:<br>
+- **durable push consumer + 큐 그룹(`deliverGroup`)**:<br>
   - `PushSubscribeOptions.builder().durable(이름)`로 구독하면, 앱이 재기동돼도 NATS 서버가 "어디까지 소비했는지"를 기억해서 못 받은 메시지부터 이어서 준다.
+  - `app`이 2 replica로 뜨는 이 프로젝트 구조상, 큐 그룹 없이 같은 durable 이름을 두 인스턴스가 동시에 구독하면 durable push consumer는 구독자를 하나만 허용하기 때문에 두 번째 인스턴스가 `[SUB-90012] Consumer is already bound to a subscription`로 기동 자체에 실패한다(실제로 겪음, `docs/OBSERVABILITY.md` 3절 참고). 그래서 `.deliverGroup(DURABLE_NAME)`을 함께 지정하고 `jetStream.subscribe(SUBJECT, DURABLE_NAME, dispatcher, this::handle, false, options)`처럼 큐 이름을 넘겨 큐 그룹으로 구독한다 - 같은 durable에 여러 인스턴스가 동시에 바인딩되고, NATS가 그 멤버들 사이에 메시지를 나눠준다(각 메시지는 그룹 내 한 인스턴스에만 전달돼 적립금 중복 지급 같은 문제가 생기지 않는다).
 - **manual ack(`autoAck=false`)**:<br>
   - 처리에 성공했을 때만 `ack()`를 호출하고, 실패하면 `nak()`으로 재전달을 요청한다 — 자체 재시도 루프를 짤 필요 없이 JetStream의 at-least-once 전달에 그대로 위임.
 - **비즈니스 로직은 `process()`로 분리**:<br>

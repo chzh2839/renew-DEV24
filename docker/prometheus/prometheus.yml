@@ -1,0 +1,18 @@
+# dns_sd_configs를 쓰는 이유:
+#  app 서비스는 2 replica로 뜨고, Docker Compose의 임베디드 DNS(127.0.0.11)는
+#  `app`이라는 이름을 조회할 때 두 replica의 IP를 모두 반환한다. 그런데 static_configs로 "app:8080" 하나만
+#  적으면 Prometheus는 시작 시점에 딱 한 번만 그 이름을 resolve해서 그중 하나의 IP만 고정으로 계속 스크래핑한다
+#   - 즉 두 인스턴스 중 한쪽 지표만 영원히 보게 된다. dns_sd_configs는 refresh_interval마다 주기적으로
+#   재조회해서 타겟 목록을 최신 상태로 유지한다 - nginx가 이 프로젝트에서 이미 같은 문제를 `resolve` 파라미터로 푼 것
+#   (docker/nginx/default.conf, docs/DOCKER.md 5절)과 동일한 문제를 다른 방식으로 푸는 것이다.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: bookstore-app
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: ["app"]
+        type: A
+        port: 8080
+        refresh_interval: 15s

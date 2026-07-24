@@ -1,6 +1,6 @@
 # Docker Compose 인프라 가이드
 
-`docker compose up` 한 번으로 앱(2개 복제) + Postgres(Flyway) + Redis + NATS JetStream + Nginx(리버스 프록시/로드밸런서)를 로컬에 띄우는 구성이다.
+`docker compose up` 한 번으로 앱(2개 복제) + Postgres(Flyway) + Redis + NATS JetStream + Nginx(리버스 프록시/로드밸런서) + Prometheus(메트릭 수집)를 로컬에 띄우는 구성이다.
 
 ## 한눈에 보는 전체 구조
 
@@ -22,6 +22,13 @@
   │ postgres  │        │   redis   │         │   nats    │
   │ (Flyway)  │        │           │         │(JetStream)│
   └───────────┘        └───────────┘         └───────────┘
+
+        ▲                    ▲
+        │ (스크래핑, nginx 안 거침) │
+        └──────────┬─────────┘
+             ┌──────┴──────┐
+             │ prometheus  │  app-1/app-2의 /actuator/prometheus를 직접 수집
+             └─────────────┘
 ```
 
 | 서비스 | 역할 | 호스트 포트 | mem_limit |
@@ -31,6 +38,7 @@
 | postgres | 메인 DB (Flyway로 스키마 관리) | 5432 | 512m |
 | redis | 캐시 / 세션 저장용 | 6379 | 256m |
 | nats | 비동기 이벤트 브로커(JetStream) | 4222, 8222 | 128m |
+| prometheus | 메트릭 수집(app의 `/actuator/prometheus` 스크래핑) | 9090 | 192m |
 
 ## 목차
 
@@ -52,7 +60,7 @@
 - **Compose 버전 확인**: `docker compose version`을 실행해본다 (하이픈 없이 `docker compose`). 결과가 나와야 정상이다.
   - 만약 이 명령이 없고 하이픈이 들어간 구버전 `docker-compose`만 있다면, 6번 섹션에서 쓰는 `deploy.replicas` 설정이 조용히 무시되니 Docker Desktop을 최신으로 올려야 한다.
 - **포트 확인**: 아래 포트가 로컬에서 비어 있어야 한다. 이미 다른 프로그램이 쓰고 있으면 충돌한다.
-  - `5432` (Postgres), `6379` (Redis), `4222`/`8222` (NATS), `8080` (Nginx)
+  - `5432` (Postgres), `6379` (Redis), `4222`/`8222` (NATS), `8080` (Nginx), `9090` (Prometheus)
 
 ---
 
@@ -126,6 +134,7 @@ depends_on:
 | nats | `wget -qO- http://localhost:8222/healthz` | NATS 모니터링 포트(`-m 8222`)의 헬스 엔드포인트 |
 | app | `wget --spider -q http://localhost:8080/actuator/health` | Spring Boot Actuator 헬스 엔드포인트 |
 | nginx | `wget --spider -q http://127.0.0.1/swagger-ui/index.html` | nginx 프로세스 자체뿐 아니라 nginx→app 프록시 체인이 실제로 2xx를 반환하는지까지 같이 검증한다 |
+| prometheus | `wget --spider -q http://127.0.0.1:9090/-/healthy` | Prometheus 자체 헬스 엔드포인트 |
 
 **nginx만 처음엔 healthcheck가 없었던 이유와 나중에 추가한 이유**: nginx 뒤에는 아무도 의존하는 서비스가 없어서(체인의 맨 끝) 원래는 굳이 안 넣었는데, 그러면 `docker compose ps`로 전체 상태를 볼 때 nginx만 항상 `Started`로만 남아서 실제로 요청을 정상 처리하고 있는지 알 수 없었다. 관찰 가능성을 다른 서비스와 맞추려고 추가했다.
 
@@ -157,6 +166,7 @@ depends_on:
 | nats | 128m |
 | app | 512m |
 | nginx | 64m |
+| prometheus | 192m |
 
 **JVM에서 주의할 점**:<br>
 Java 21은 컨테이너의 메모리 제한(cgroup)을 자동으로 인식해서, 기본적으로 힙을 컨테이너 `mem_limit`의 **약 25%**로 잡는다(`-XX:MaxRAMPercentage=25.0`이 기본값).
@@ -231,7 +241,7 @@ Docker Swarm 모드로 전환하면 서비스마다 라우팅 메시(ingress net
 
 ### actuator 이중 차단
 
-`/actuator/` 경로는 nginx에서 `deny all; return 404;`로 아예 막아뒀다. Spring 쪽에서도 `management.endpoints.web.exposure.include=health`로 `health`만 열어뒀지만, 그마저도 외부(nginx 앞단)에서는 노출하지 않는 이중 방어다. 컨테이너 자체 헬스체크는 nginx를 거치지 않고 컨테이너 내부에서 `localhost:8080`으로 직접 확인하므로 이 차단과 무관하게 동작한다.
+`/actuator/` 경로는 nginx에서 `deny all; return 404;`로 아예 막아뒀다. Spring 쪽에서도 `management.endpoints.web.exposure.include`로 실제 노출 범위(현재 `health,metrics,prometheus`)를 명시적으로 제한하지만, 그마저도 외부(nginx 앞단)에서는 노출하지 않는 이중 방어다. 컨테이너 자체 헬스체크와 `prometheus` 서비스의 스크래핑은 둘 다 nginx를 거치지 않고 내부망(`bookstore-net`)에서 `app:8080`으로 직접 접근하므로 이 차단과 무관하게 동작한다. 왜 `metrics`/`prometheus`까지 열게 됐는지, Prometheus가 2개 app 인스턴스를 모두 스크래핑하는 원리는 [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md) 참고.
 
 ---
 
@@ -294,7 +304,7 @@ docker compose build
 # 2-1. 전체 스택 기동 (백그라운드)
 docker compose up -d
 # 2-2. 인프라만 - 일상적인 로컬 개발/디버깅용
-docker compose up -d postgres redis nats mailpit seaweedfs
+docker compose up -d postgres redis nats mailpit seaweedfs prometheus
 
  ✔ Network dev24_bookstore-net Created  # 컨테이너들이 서로 통신할 수 있도록 전용 가상 네트워크를 새로 만든 것                                                                                                                                                                                                                                                                       0.1s
  ✔ Container dev24-nats-1      Healthy # NATS(메시징/이벤트 브로커로 추정) 컨테이너가 생성되어 실행됐고, healthcheck를 통과                                                                                                                                                                                                                                                                         6.4s
@@ -326,6 +336,9 @@ docker exec -it $(docker compose ps -q postgres) psql -U bookstore -d bookstore 
 docker exec -it $(docker compose ps -q redis) redis-cli ping
 curl -s http://localhost:8222/healthz
 
+# 9-1. Prometheus가 app 2개 인스턴스를 모두 타겟으로 잡았는지 확인 (health="up"이 2번 나와야 함)
+curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"'
+
 # 10. 메모리 제한 준수 확인
 docker stats --no-stream
 
@@ -352,6 +365,9 @@ docker exec -it $(docker compose ps -q app | Select-Object -First 1) wget -qO- h
 
 # 9. NATS 확인 (redis-cli 명령은 bash와 동일)
 curl.exe -s http://localhost:8222/healthz
+
+# 9-1. Prometheus가 app 2개 인스턴스를 모두 타겟으로 잡았는지 확인
+(Invoke-WebRequest -Uri http://localhost:9090/api/v1/targets -UseBasicParsing).Content | Select-String '"health":"[a-z]*"'
 
 # 11. 정리 (볼륨까지 삭제 - DB 데이터 초기화됨)
 docker compose down -v
@@ -382,3 +398,7 @@ docker compose down -v
 | Flyway 체크섬 불일치 에러 (`FlywayValidateException`) | 이미 적용된 마이그레이션 파일(`V1__init.sql` 등)을 수정했을 때 발생한다.<br> 이미 적용된 파일은 절대 수정하지 말고 새 버전(`V2__...sql`)을 추가한다.<br> 로컬 개발 중 데이터를 버려도 된다면 `docker compose down -v`로 볼륨째 지우고 처음부터 다시 마이그레이션한다.                             |
 | `deploy.replicas: 2`인데 컨테이너가 1개만 뜸 | `docker compose version`으로 Compose V2(공백 있는 `docker compose`)를 쓰고 있는지 확인.<br> 구버전 `docker-compose`(하이픈, 파이썬 구현)는 `deploy:` 키를 무시한다.<br> 최신 Docker Desktop을 쓰거나, 임시로 `docker compose up -d --scale app=2`를 쓴다. |
 | nginx가 한쪽 컨테이너로만 계속 요청을 보냄 | 5번 섹션에서 설명한 정적 upstream 함정과 동일한 증상이다.<br> `docker/nginx/default.conf`가 `resolver` + 변수 기반 `proxy_pass` 방식인지 확인한다.<br> `upstream { server app:8080; }` 같은 정적 블록으로 되돌아가 있으면 이 문제가 재발한다.                         |
+| Prometheus `/targets`에서 app이 1개만 보이거나 `DOWN`으로 나옴 | `docker/prometheus/prometheus.yml`이 `static_configs`가 아니라 `dns_sd_configs`(names: app, type: A, port: 8080)인지 확인한다. `static_configs`로 되돌아가 있으면 nginx 정적 upstream과 같은 문제(최초 1회만 resolve)가 재발한다.<br> `DOWN`이면 `curl http://localhost:9090/api/v1/targets`의 `lastError`로 원인(연결 거부 등)을 확인하고, `app` 컨테이너가 healthy인지(`docker compose ps`) 먼저 본다. |
+| 외부에서 `curl http://localhost:8080/actuator/prometheus`가 200으로 응답함(404여야 정상) | `docker/nginx/default.conf`의 `location /actuator/ { deny all; return 404; }` 블록이 지워졌거나 위치가 잘못됐는지 확인한다 - 이중 차단의 첫 번째 레이어가 깨진 것이다. |
+| `app-2`(또는 두 번째 이후 replica)가 `[SUB-90012] Consumer is already bound to a subscription`로 기동 실패, 그 여파로 `nginx`/`prometheus`도 `depends_on: service_healthy`에 막혀 안 뜸 | 이미 고쳐진 문제다(`docs/OBSERVABILITY.md` 3절, `docs/NATS.md` 참고) - NATS 컨슈머가 큐 그룹(`deliverGroup`) 없이 구독하면 2 replica가 같은 durable push consumer 이름을 두고 충돌한다. 최신 코드는 큐 그룹으로 구독하므로 이 증상이 보이면 이미지가 최신 코드로 다시 빌드됐는지(`docker compose build app`) 먼저 확인한다. |
+| 위 문제를 고친 뒤에도 `[SUB-90016] Existing consumer cannot be modified. Changed fields: [deliverGroup]`로 기동 실패 | `natsdata` 볼륨에 이전(큐 그룹 없이 생성된) durable consumer 설정이 남아있어서다. NATS JetStream은 기존 durable consumer의 `deliverGroup`을 나중에 바꾸는 걸 허용하지 않는다. 로컬 개발 볼륨이라 데이터를 버려도 되면 `docker compose down` 후 `docker volume rm dev24_natsdata`로 지우고 다시 `docker compose up -d`한다. |

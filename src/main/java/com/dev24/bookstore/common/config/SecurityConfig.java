@@ -33,7 +33,10 @@ public class SecurityConfig {
             "/api/reviews/**",
             "/swagger-ui/**",
             "/v3/api-docs/**",
-            "/actuator/health"
+            // 실제 노출 범위를 정하는 건 이 URL 패턴이 아니라 application.properties의
+            // management.endpoints.web.exposure.include(명시적 allowlist)다 - 외부에서는 nginx가
+            // /actuator/ 전체를 여전히 차단한다(docs/OBSERVABILITY.md 참고).
+            "/actuator/**"
     };
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;

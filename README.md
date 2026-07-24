@@ -23,6 +23,7 @@ graph TB
     NATS{{"NATS JetStream"}}
     SeaweedFS[("SeaweedFS<br/>S3 호환 스토리지")]
     Mailpit["Mailpit<br/>로컬 SMTP"]
+    Prometheus["Prometheus<br/>메트릭 수집"]
 
     Client --> Nginx
     Nginx --> App1
@@ -37,9 +38,11 @@ graph TB
     App2 --> NATS
     App2 --> SeaweedFS
     App2 --> Mailpit
+    Prometheus -.->|scrape /actuator/prometheus| App1
+    Prometheus -.->|scrape /actuator/prometheus| App2
 ```
 
-앱은 상태를 갖지 않는 REST API(JWT 인증)라 2개 replica 중 어느 인스턴스가 요청을 받아도 동일하게 동작하고, Nginx가 그 앞단에서 라운드로빈으로 분산한다. Postgres(영속 데이터)·Redis(토큰/캐시)·NATS JetStream(구매완료/재고부족 비동기 이벤트)·SeaweedFS(포토 리뷰 이미지)·Mailpit(로컬 메일 확인용)은 모두 `docker-compose.yml`에 컨테이너 하나씩으로 정의돼 있다.
+앱은 상태를 갖지 않는 REST API(JWT 인증)라 2개 replica 중 어느 인스턴스가 요청을 받아도 동일하게 동작하고, Nginx가 그 앞단에서 라운드로빈으로 분산한다. Postgres(영속 데이터)·Redis(토큰/캐시)·NATS JetStream(구매완료/재고부족 비동기 이벤트)·SeaweedFS(포토 리뷰 이미지)·Mailpit(로컬 메일 확인용)·Prometheus(메트릭 수집, nginx를 거치지 않고 내부망에서 app에 직접 스크래핑)는 모두 `docker-compose.yml`에 컨테이너 하나씩으로 정의돼 있다.
 
 ### 이벤트 브로커: Kafka 대신 NATS JetStream를 택한 이유
 
@@ -73,7 +76,8 @@ graph TB
 - **Redis 7** — 리프레시 토큰/로그아웃 블랙리스트(인증 모듈) + Spring Cache 캐싱(도서 카탈로그 모듈)
 - **NATS JetStream** — 단일 바이너리로 가볍게 동작(Zookeeper/별도 컨트롤러 클러스터 불필요), 구매 완료 후 적립금/알림, 안전재고 이하 시 재입고 알림 등을 비동기 이벤트로 분리(구매 모듈), 테스트는 Testcontainers(NATS 이미지 기반 GenericContainer) 사용
 - **Nginx** — 리버스 프록시 + app 2 replica 앞단 라운드로빈 로드밸런싱 데모
-- **Dockerfile(멀티스테이지) + docker-compose.yml**(app×2 + postgres + redis + nats + nginx) — `docker-compose up` 한 번으로 전체 인프라 로컬 실행
+- **Spring Boot Actuator + Micrometer(Prometheus)** — JVM/HTTP/캐시 자동 계측 + 이벤트 소비(`OrderCompletedEvent`/`LowStockEvent`) 성공·실패 커스텀 카운터, Prometheus 컨테이너로 실제 스크래핑까지 검증(`docs/OBSERVABILITY.md`)
+- **Dockerfile(멀티스테이지) + docker-compose.yml**(app×2 + postgres + redis + nats + nginx + prometheus) — `docker-compose up` 한 번으로 전체 인프라 로컬 실행
 - **컨테이너 메모리 제한** — `docker-compose.yml`에서 서비스별 `mem_limit`(또는 `deploy.resources.limits.memory`)로 최대 사용 메모리 상한 지정(예: DB(PostgreSQL) 512MB, Redis 256MB, NATS 128MB 등)
 - **Claude Code (Anthropic)** — AI 코딩 어시스턴트를 활용해 개발
 
@@ -94,8 +98,9 @@ To-Be 스키마는 [`docs/ERD.md`](./docs/ERD.md) 참고.
 | 인증 방식 | 세션 기반(`JSESSIONID`), 서버가 상태를 가짐 | JWT Stateless — app 2 replica + Nginx 라운드로빈에서도 세션 동기화 불필요 |
 | 트랜잭션 | 구매 흐름이 `/purchaseInsert`, `/pdetailInsert`, `/purchasedItemDelete` 등 별도 AJAX 엔드포인트로 쪼개져 일부만 `@Transactional` — 중간 실패 시 주문 헤더만 남거나 장바구니 미삭제 등 정합성 깨질 위험 | `PurchaseCommandService.purchase()` 전체를 단일 `@Transactional`로 묶고, `Stock.version` 낙관적 락으로 동시 주문 시 오버셀 방지 |
 | 비동기 처리 | 없음(전부 동기 처리) | NATS JetStream으로 구매완료/재고부족 이벤트를 커밋 후 비동기 발행, at-least-once 재전달 보장 |
+| 운영 가시성 | 없음(로그 확인만 가능) | Actuator+Micrometer(Prometheus) — JVM/HTTP/캐시 자동 계측 + 이벤트 소비 커스텀 카운터, docker-compose에 Prometheus 스크래핑 컨테이너 포함 |
 
-실측 근거는 [`docs/PERFORMANCE.md`](./docs/PERFORMANCE.md), 설계 이유는 [`docs/JWT.md`](./docs/JWT.md)/[`docs/NATS.md`](./docs/NATS.md)/[`docs/PURCHASE.md`](./docs/PURCHASE.md) 등 각 `docs/*.md` 참고.
+실측 근거는 [`docs/PERFORMANCE.md`](./docs/PERFORMANCE.md), 설계 이유는 [`docs/JWT.md`](./docs/JWT.md)/[`docs/NATS.md`](./docs/NATS.md)/[`docs/PURCHASE.md`](./docs/PURCHASE.md)/[`docs/OBSERVABILITY.md`](./docs/OBSERVABILITY.md) 등 각 `docs/*.md` 참고.
 
 - 4개 핵심 모듈 단위/통합 테스트 커버리지 감사 및 보완: [`docs/TESTING.md`](./docs/TESTING.md)
 - JaCoCo 커버리지 측정 설정 및 리포트 읽는 법: [`docs/JACOCO.md`](./docs/JACOCO.md)
@@ -107,7 +112,7 @@ docker compose build
 docker compose up -d
 ```
 
-앱(2 replica) + Postgres(Flyway) + Redis + NATS JetStream + Nginx(리버스 프록시/로드밸런서)가 함께 뜬다. `http://localhost:8080/swagger-ui/index.html`에서 Swagger UI를 확인할 수 있다.
+앱(2 replica) + Postgres(Flyway) + Redis + NATS JetStream + Nginx(리버스 프록시/로드밸런서) + Prometheus(메트릭 수집)가 함께 뜬다. `http://localhost:8080/swagger-ui/index.html`에서 Swagger UI를, `http://localhost:9090`에서 Prometheus UI(`/targets`, `/graph`)를 확인할 수 있다.
 
 각 구성 요소를 왜 이렇게 만들었는지(멀티스테이지 Dockerfile, healthcheck, mem_limit, Nginx 라운드로빈, Flyway 베이스라인 등)와 단계별 명령어·트러블슈팅은 [`docs/DOCKER.md`](./docs/DOCKER.md) 참고.
 

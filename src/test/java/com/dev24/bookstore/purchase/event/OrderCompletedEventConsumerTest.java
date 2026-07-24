@@ -22,6 +22,7 @@ import com.dev24.bookstore.auth.repository.CustomerRepository;
 import com.dev24.bookstore.common.notification.EmailNotificationSender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.nats.client.Connection;
 import io.nats.client.JetStream;
 
@@ -44,7 +45,8 @@ class OrderCompletedEventConsumerTest {
     @BeforeEach
     void setUp() {
         consumer = new OrderCompletedEventConsumer(
-                natsConnection, jetStream, customerRepository, emailNotificationSender, objectMapper);
+                natsConnection, jetStream, customerRepository, emailNotificationSender, objectMapper,
+                new SimpleMeterRegistry());
     }
 
     private Customer customer(long id) {
